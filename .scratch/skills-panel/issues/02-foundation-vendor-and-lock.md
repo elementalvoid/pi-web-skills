@@ -36,11 +36,11 @@ Verification from `/data/home/projects/pi-web-skills-wt/02`:
 
 New seams:
 
-- `src/operations/lockfile.ts` — `readLockfile` (missing file is an empty version 3 lock, malformed JSON or shape is `lock-unreadable`), `writeLockfile` (temp file plus rename, preserves unknown top-level and entry fields, `dismissed`, `lastSelectedAgents`, and never lowers `version`), `mutateLockfile` (per-path queue, re-read before write, throwing mutation writes nothing).
+- `src/operations/lockfile.ts` — `readLockfile` (missing file is an empty version 3 lock, malformed JSON or shape is `lock-unreadable`) and `mutateLockfile` (queue keyed by the resolved path, re-read before write, callback receives a draft and commits only an `ok` result, temp file flushed before rename, unknown top-level and entry fields preserved, `version` never lowered). The raw writer is not exported, so callers cannot bypass serialization.
 - `src/operations/matching.ts` — `sanitizeName` (upstream install-folder rules) and `matchSkillName` (exact lock key, sanitised lock key, sanitised folder name; a key like `ce:review` matches folder `ce-review`).
-- `src/operations/containment.ts` — `resolveManagedPath` (single segment, strictly inside the managed directory), `assertSafeSkillDirectory` (refuses symlinked folders, accepts a missing folder for broken-entry cleanup), `removeTempDirectory` (removes only strictly inside the temp root).
-- `src/operations/errors.ts` — `OperationError` with the `lock-unreadable` and `unsafe-path` codes.
+- `src/operations/containment.ts` — `resolveManagedPath` (single segment, strictly inside the managed directory), `assertSafeSkillDirectory` (resolves the root and target with `realpath`, refuses symlinked folders, accepts a symlinked managed root but returns its real path, accepts a missing folder for broken-entry cleanup), `removeTempDirectory` (removes only when the real path stays inside the real temp root).
+- `src/operations/errors.ts` — `OperationError` with the `lock-unreadable` and `unsafe-path` codes, optional `details?: JsonValue`, and the shared `Result<T>` union.
 
 Vendored subset: `src/vendor/skills/` holds the 12 pinned modules plus upstream `LICENSE` and `PROVENANCE.md`. `PROVENANCE.md` records the source URL, commit `a80e4c9d12d607631249d4d7d059f835d4b2f13a`, a sha256 per file, and the do-not-edit rule; `test/vendor.test.ts` recomputes every hash and imports four modules, so an edit to a vendor file fails the suite.
 
-Note: `exactOptionalPropertyTypes` is now off in `tsconfig.json` with a comment. The verbatim upstream subset assigns `undefined` to optional properties, and vendor files must not be edited. Re-enable it if the subset is ever replaced by a typed package.
+Note: `exactOptionalPropertyTypes` is off in `tsconfig.json` with a comment stating why. The verbatim upstream subset assigns `undefined` to optional properties; every other strict flag stays on, vendor files must not be edited, and there is no second tsconfig project. Re-enable it if the subset is ever replaced by a typed package.

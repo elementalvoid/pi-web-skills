@@ -8,9 +8,10 @@
     "rootDir": "src",
     "outDir": "dist",
     "strict": true,
-    // Off because the verbatim upstream subset in src/vendor/skills assigns
-    // undefined to optional properties. Do not edit vendor files; re-enable
-    // this flag if the vendor subset is ever replaced by a typed package.
+    // Off only because the verbatim upstream subset in src/vendor/skills assigns
+    // undefined to optional properties. Every other strict flag stays on, the
+    // subset stays unedited, and there is no second tsconfig project: re-enable
+    // this flag only if the subset is replaced by a typed package.
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
