@@ -1,5 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import type { OperationContext } from "./context.ts";
+import { readLockfile } from "./lockfile.ts";
 
 export type StatusPayload = {
   readonly managedDirectory: string;
@@ -17,22 +18,13 @@ export async function getStatus(context: OperationContext): Promise<StatusPayloa
     exists(lockfilePath),
   ]);
   context.signal.throwIfAborted();
-  const lockReadable = lockfileExists && (await isReadableFile(lockfilePath));
+  const lockReadable = lockfileExists && (await readLockfile(lockfilePath)).ok;
   return { managedDirectory, lockfilePath, managedDirectoryExists, lockfileExists, lockReadable };
 }
 
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function isReadableFile(path: string): Promise<boolean> {
-  try {
-    await readFile(path);
     return true;
   } catch {
     return false;

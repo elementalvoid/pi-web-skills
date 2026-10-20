@@ -26,7 +26,7 @@ test("status reports both paths, their existence, and a readable lock", async ()
     const paths = resolveSkillPaths(environment);
     await mkdir(paths.managedDirectory, { recursive: true });
     await mkdir(join(environment.xdgStateHome, "skills"), { recursive: true });
-    await writeFile(paths.lockfilePath, "{}\n");
+    await writeFile(paths.lockfilePath, JSON.stringify({ version: 3, skills: {} }));
 
     assert.deepEqual(await getStatus({ paths, signal }), {
       managedDirectory: paths.managedDirectory,
@@ -56,6 +56,32 @@ test("status reports an unreadable lock without failing", async () => {
   await withTemporaryHome(async (environment) => {
     const paths = resolveSkillPaths(environment);
     await mkdir(paths.lockfilePath, { recursive: true });
+
+    const status = await getStatus({ paths, signal });
+
+    assert.equal(status.lockfileExists, true);
+    assert.equal(status.lockReadable, false);
+  });
+});
+
+test("status reports a malformed lock as unreadable even when the file exists", async () => {
+  await withTemporaryHome(async (environment) => {
+    const paths = resolveSkillPaths(environment);
+    await mkdir(join(environment.xdgStateHome, "skills"), { recursive: true });
+    await writeFile(paths.lockfilePath, "{ not json");
+
+    const status = await getStatus({ paths, signal });
+
+    assert.equal(status.lockfileExists, true);
+    assert.equal(status.lockReadable, false);
+  });
+});
+
+test("status reports a lock with the wrong shape as unreadable", async () => {
+  await withTemporaryHome(async (environment) => {
+    const paths = resolveSkillPaths(environment);
+    await mkdir(join(environment.xdgStateHome, "skills"), { recursive: true });
+    await writeFile(paths.lockfilePath, JSON.stringify({ dismissed: {} }));
 
     const status = await getStatus({ paths, signal });
 
