@@ -202,6 +202,72 @@ test("invalid frontmatter marks a row without hiding it", async () => {
   });
 });
 
+test("non-object frontmatter marks a row invalid and keeps the rest listed", async () => {
+  await withTemporaryHome(async ({ paths }) => {
+    await writeSkill(paths.managedDirectory, "scalar", "---\njust-a-string\n---\n");
+    await writeSkill(paths.managedDirectory, "array", "---\n- one\n- two\n---\n");
+    await writeSkill(
+      paths.managedDirectory,
+      "valid",
+      "---\nname: valid\ndescription: A valid skill\n---\n",
+    );
+
+    const result = await listSkills({ paths, signal });
+
+    assert.deepEqual(
+      result.rows.map((row) => [row.name, row.state, row.invalidReason]),
+      [
+        ["array", "unmanaged", "frontmatter is not an object"],
+        ["scalar", "unmanaged", "frontmatter is not an object"],
+        ["valid", "unmanaged", null],
+      ],
+    );
+    assert.equal(result.rows.find((row) => row.name === "valid")?.description, "A valid skill");
+    assert.deepEqual(result.counts, { managed: 0, unmanaged: 3, broken: 0 });
+  });
+});
+
+test("a long description with control characters is sanitised and capped", async () => {
+  await withTemporaryHome(async ({ paths }) => {
+    const description = `Safe\u001b[31m red\u0007\n${"x".repeat(600)}`;
+    await writeSkill(
+      paths.managedDirectory,
+      "noisy",
+      `---\nname: noisy\ndescription: ${JSON.stringify(description)}\n---\n`,
+    );
+
+    const result = await listSkills({ paths, signal });
+    const row = result.rows[0];
+
+    assert.ok(row);
+    assert.equal(row.description, `Safe red ${"x".repeat(491)}`);
+    assert.equal(row.description.length, 500);
+    assert.doesNotMatch(row.description, /[\u0000-\u001f\u007f-\u009f]/);
+  });
+});
+
+test("one lock entry marks only the first matching present folder as managed", async () => {
+  await withTemporaryHome(async ({ paths }) => {
+    const frontmatter = "---\nname: demo\ndescription: Duplicate name\n---\n";
+    await writeSkill(paths.managedDirectory, "first", frontmatter);
+    await writeSkill(paths.managedDirectory, "second", frontmatter);
+    await writeLock(paths, { demo: demoEntry });
+
+    const result = await listSkills({ paths, signal });
+
+    assert.deepEqual(
+      result.rows.map((row) => [row.folderName, row.state]).sort(),
+      [
+        ["first", "managed"],
+        ["second", "unmanaged"],
+      ].sort(),
+    );
+    assert.equal(result.rows.filter((row) => row.state === "managed").length, 1);
+    assert.equal(result.rows.filter((row) => row.state === "unmanaged").length, 1);
+    assert.deepEqual(result.counts, { managed: 1, unmanaged: 1, broken: 0 });
+  });
+});
+
 test("discovery finds nested skills to five levels and skips noise directories", async () => {
   await withTemporaryHome(async ({ paths }) => {
     const skill = (name: string) => `---\nname: ${name}\ndescription: Nested\n---\n`;

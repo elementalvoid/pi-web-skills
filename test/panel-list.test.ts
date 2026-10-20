@@ -153,6 +153,29 @@ test("the list panel renders managed, unmanaged, broken, and invalid rows withou
   assert.doesNotMatch(text, /<button/);
 });
 
+test("the list panel renders a managed row's source, ref, and updated time", async () => {
+  const context = panelContext(
+    "managed-metadata-machine",
+    async () => ({
+      ok: true,
+      value: {
+        rows: [payload.rows[0]!],
+        counts: { managed: 1, unmanaged: 0, broken: 0 },
+        lockWarning: null,
+      },
+    }),
+    () => undefined,
+  );
+  draw(context);
+  await settle();
+
+  const text = draw(context);
+
+  assert.match(text, /github owner\/repo/);
+  assert.match(text, /ref main/);
+  assert.match(text, /updated 2026-01-02T00:00:00.000Z/);
+});
+
 test("the list panel renders an empty state when nothing is present", async () => {
   const context = panelContext(
     "empty-machine",
