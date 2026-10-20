@@ -35,3 +35,21 @@ Commands:
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
 - `npm test` — pass, 85 tests total; 31 new (source parsing, local git clone and candidate paging, existing-target states, folder-hash shapes, cleanup on success/failure/cancel, channel validation and prompt return, plugin channel wiring).
+
+## Comments
+
+Review fixes on `ticket/04-fix`, after merging `integration/skills-panel`:
+
+- Every candidate string is now sanitised with the vendored `sanitizeMetadata` and capped by UTF-8 bytes: `name` 80, `description` 400, `sourcePath` 300. `folderName` stays the `sanitizeName` output (ASCII, 255 max). The theoretical worst case for 25 candidates with every escapable byte is 49,482 bytes, so a page stays safely under the host's 64 KiB frame bound.
+- An unreadable lock now fails resolution with `lock-unreadable` instead of pretending there are no entries. The catch-all discovery error no longer masks it.
+- The existing-target badge uses the same three matching rungs as List and receives the present folder names. A lock key without its install folder (a broken entry) is `none`, not `managed`; a present folder that only matches after sanitising is `unmanaged`.
+- `add-panel.ts` holds an `AbortController` for the in-flight `openChannel`, passes its signal to the peer, and aborts it on Cancel. A channel that resolves after the cancel is closed instead of adopted.
+- The Add panel says an overwrite confirmation will come before install, and the install action stays disabled until ticket 05; a note states that selecting skills writes nothing. No install, copy, or lock write was added.
+- Git calls pass `--end-of-options` to `rev-parse` and `unsetEnv: ["GIT_DIR", "GIT_WORK_TREE"]`, so an inherited daemon environment cannot redirect the clone.
+- `upstream/git.ts` uses the realpath-aware `isRealPathInside` containment helper; the duplicate `isInside` and `exists` helpers are gone.
+
+Commands:
+
+- `npm run build` — pass.
+- `npm run typecheck` — pass.
+- `npm test` — pass, 107 tests total; 6 new (malformed lock, broken and sanitised-directory targets, hostile candidate page bound, pending-open cancel, disabled install copy).
