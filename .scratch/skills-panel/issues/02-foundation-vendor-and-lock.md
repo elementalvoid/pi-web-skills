@@ -44,3 +44,14 @@ New seams:
 Vendored subset: `src/vendor/skills/` holds the 12 pinned modules plus upstream `LICENSE` and `PROVENANCE.md`. `PROVENANCE.md` records the source URL, commit `a80e4c9d12d607631249d4d7d059f835d4b2f13a`, a sha256 per file, and the do-not-edit rule; `test/vendor.test.ts` recomputes every hash and imports four modules, so an edit to a vendor file fails the suite.
 
 Note: `exactOptionalPropertyTypes` is off in `tsconfig.json` with a comment stating why. The verbatim upstream subset assigns `undefined` to optional properties; every other strict flag stays on, vendor files must not be edited, and there is no second tsconfig project. Re-enable it if the subset is ever replaced by a typed package.
+
+## Comments
+
+Review fixes on `ticket/02-fix`, after merging `integration/skills-panel`:
+
+- Containment now resolves the managed root and target with `realpath` (resolving the parent chain for a missing target) before comparing; a symlinked managed root is followed to its real directory, a symlinked child is still refused, and temp cleanup refuses a candidate whose real path escapes the real temp root.
+- `OperationError` carries optional `details?: JsonValue`; `PathCheck`, lock read, and lock mutation share one `Result<T>` union.
+- `status` uses `readLockfile`, so malformed JSON or a wrong shape reports `lockReadable: false`.
+- `mutateLockfile` is the only exported writer. It queues on the resolved lock path, hands the callback a draft, and writes only an `ok` result; a throw or a failure result vetoes the write. The temp file is flushed before rename.
+- `exactOptionalPropertyTypes` stays off globally with the reason recorded in `tsconfig.json`; every other strict flag stays on.
+- `npm run build`, `npm run typecheck`, and `npm test` pass (54/54).
