@@ -40,20 +40,20 @@ Commands:
 
 Review fixes on `ticket/05-fix`, after merging `integration/skills-panel`:
 
-- Install selection is now keyed by the candidate's `sourcePath`, not its name, end to end: the `add` channel frame is `{ type: "install", sourcePaths }`, the panel sends each selected candidate's `sourcePath`, and the session resolves the installable candidate by that value. Two same-named skills in different folders no longer collapse onto the first one.
+- Install selection is now keyed by the candidate's `sourcePath`, not its name, end to end: the `add` channel frame is `{ type: "install", sourcePaths }`, the panel sends each selected candidate's `sourcePath`, and the session resolves the installable candidate by that value. Two same-named skills in different folders no longer collapse onto the first one. The id is the capped display path, so two paths sharing their first 300 bytes would collide; a comment records that limit.
 - A failed copy or lock write can no longer escape the install session. The install promise never rejects: each skill is wrapped so a failure is recorded as `failed` with a message while earlier successes stay, and `done` is emitted once on every path after validation. Validation errors (duplicate destination, unreadable lock) still end with an `error` frame and no copy.
 - The safe copier now treats the lock write as the commit step: stage, swap (the previous directory is retained as `.pi-web-skills-*.old`), write the lock entry, then delete the backup. Any post-swap failure rolls back — the backup is renamed back, or the new directory is removed when there was no previous install — so a failed lock write keeps the old content and the old entry, and writes no entry for the new skill.
 - `installSkillDirectory` takes an optional `InstallCommit` callback (default: nothing), so the copier owns the backup lifecycle. A throwing or failing commit returns a failure and rolls back before returning.
-- A replacement no longer keeps a stale `pluginName`: the entry is written with the source's plugin group when discovery found one, and the field is deleted when it did not. `ref` already behaved this way. Unknown per-entry fields still survive.
+- A replacement no longer keeps a stale `pluginName`: the entry is written with the source's plugin group when discovery found one (covered by a plugin-manifest fixture), and the field is deleted when it did not. `ref` already behaved this way. Unknown per-entry fields still survive.
 - The vacuous lexical `isInside` check in `copyTree` is gone; the symlink skip is the containment rule, and the comment now says so. The unused `sourceRoot` parameter went with it.
 - The duplicate checks and messages are unified: `selectionConflict(targets)` checks the resolved install folder and then the lock key, and one `conflictError(subject, value)` builds both messages. The earlier sanitised-name pre-check was redundant; the resolved-folder check catches the same selection after the destination rule runs.
 - `AddContext.mutateLock` is an optional lock-mutation seam so a test can force a failed write after the swap. It defaults to `mutateLockfile`.
 - No change to `src/vendor/skills/**`, and no remove/update/search behavior was added.
 
-Tests added: two same-named skills install from the selected `sourcePath` with the right content and folder hash; a throwing lock write fails only the second skill, keeps the first install and entry, removes the new directory, sends `done`, and raises no unhandled rejection; a failed write after replacing a target restores the old content and old lock entry. The managed-overwrite test now also asserts the stale `pluginName` is gone. Existing session tests select by `sourcePath`.
+Tests added: two same-named skills install from the selected `sourcePath` with the right content and folder hash; a throwing lock write fails only the second skill, keeps the first install and entry, removes the new directory, sends `done`, and raises no unhandled rejection; a failed write after replacing a target restores the old content and old lock entry; a plugin-manifest source records its `pluginName`. The managed-overwrite test now also asserts the stale `pluginName` is gone. Existing session tests select by `sourcePath`.
 
 Commands:
 
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
-- `npm test` — pass, 125 tests total; 3 new.
+- `npm test` — pass, 126 tests total; 4 new.

@@ -315,6 +315,8 @@ async function discoverCandidates(
     // without a present folder is a broken entry, not a target this replaces.
     const target = resolveInstallTarget(skill.name, { lockKeys, folderNames });
     const skillPath = relativeFolder === "" ? "SKILL.md" : `${relativeFolder}/SKILL.md`;
+    // shortcut: this capped display path is also the selection id; two paths that share
+    // their first 300 bytes collide, so add a separate id if such sources become real.
     const sourcePath = candidateText(skillPath, SOURCE_PATH_LIMIT);
     candidates.push({
       name: candidateText(skill.name, NAME_LIMIT),

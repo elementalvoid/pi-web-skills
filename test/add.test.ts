@@ -57,7 +57,7 @@ type FixtureSkill = { readonly name: string; readonly description: string; reado
 async function createSourceRepo(
   harness: Harness,
   skills: readonly FixtureSkill[],
-  options: { readonly rootSkill?: boolean } = {},
+  options: { readonly rootSkill?: boolean; readonly pluginName?: string } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(harness.fixtureRoot, "repo-"));
   await git(root, ["init", "-q"]);
@@ -69,6 +69,16 @@ async function createSourceRepo(
   }
   for (const skill of skills) {
     await writeSkill(root, skill);
+  }
+  if (options.pluginName !== undefined) {
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(root, ".claude-plugin", "plugin.json"),
+      JSON.stringify({
+        name: options.pluginName,
+        skills: skills.map((skill) => (skill.folder === "" ? "." : `./skills/${skill.folder}`)),
+      }),
+    );
   }
   await git(root, ["add", "."]);
   await git(root, ["commit", "-qm", "fixture"]);
@@ -333,6 +343,29 @@ test("two same-named skills install by source path, so the selected one's conten
     const entry = (lock["skills"] as Record<string, Record<string, unknown>>)["dup"];
     assert.equal(entry?.["skillPath"], "skills/second/SKILL.md");
     assert.equal(entry?.["skillFolderHash"], second.folderHash);
+
+    await session.dispose();
+  });
+});
+
+test("an install from a plugin source records the plugin group", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(
+      harness,
+      [{ name: "alpha", description: "Alpha skill", folder: "alpha" }],
+      { pluginName: "group" },
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["alpha"]);
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = (lock["skills"] as Record<string, Record<string, unknown>>)["alpha"];
+    assert.equal(entry?.["pluginName"], "group");
 
     await session.dispose();
   });
