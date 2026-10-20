@@ -46,6 +46,8 @@ export function openUpdateChannel(
   const send = (frame: UpdateFrame): void => {
     if (closed) return;
     try {
+      // SAFETY: UpdateFrame is a closed, JSON-safe union (strings and arrays of
+      // strings only); the host clones and validates it at the channel boundary.
       context.send(frame as unknown as JsonValue);
     } catch {
       closed = true;
@@ -63,9 +65,9 @@ export function openUpdateChannel(
     });
   }
 
-  const names = readUpdateNames(context.input);
-  if (names === null) {
-    fail("invalid-input", "update takes { names?: string[] }.");
+  const input = readUpdateInput(context.input);
+  if (input === null) {
+    fail("invalid-input", "update takes { names?: string[], checkOnly?: boolean }.");
     return inertChannel(() => {
       closed = true;
     });
@@ -79,7 +81,8 @@ export function openUpdateChannel(
       tempRoot: dependencies.tempRoot,
       fetch: dependencies.fetch,
       getToken: dependencies.getToken,
-      ...(names === undefined ? {} : { names }),
+      ...(input.names === undefined ? {} : { names: input.names }),
+      ...(input.checkOnly ? { checkOnly: true } : {}),
       ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
     },
     send,
@@ -103,20 +106,37 @@ export function openUpdateChannel(
   };
 }
 
-/** Validate an update input; `undefined` or an empty list means every managed entry. */
-function readUpdateNames(input: JsonValue): readonly string[] | undefined | null {
+type UpdateInput = {
+  readonly names?: readonly string[];
+  readonly checkOnly: boolean;
+};
+
+/** Validate an update input; `undefined` or an empty names list means every managed entry. */
+function readUpdateInput(input: JsonValue): UpdateInput | null {
   if (!isRecord(input)) return null;
-  const keys = Object.keys(input);
-  if (keys.length === 0) return undefined;
-  if (keys.length !== 1 || keys[0] !== "names") return null;
-  const names = input["names"];
-  if (!Array.isArray(names) || names.length > MAX_NAMES) return null;
-  const requested: string[] = [];
-  for (const name of names) {
-    if (typeof name !== "string" || name === "" || name.length > MAX_NAME_LENGTH) return null;
-    if (!requested.includes(name)) requested.push(name);
+  for (const key of Object.keys(input)) {
+    if (key !== "names" && key !== "checkOnly") return null;
   }
-  return requested;
+
+  let names: readonly string[] | undefined;
+  if ("names" in input) {
+    const value = input["names"];
+    if (!Array.isArray(value) || value.length > MAX_NAMES) return null;
+    const requested: string[] = [];
+    for (const name of value) {
+      if (typeof name !== "string" || name === "" || name.length > MAX_NAME_LENGTH) return null;
+      if (!requested.includes(name)) requested.push(name);
+    }
+    names = requested;
+  }
+
+  let checkOnly = false;
+  if ("checkOnly" in input) {
+    if (typeof input["checkOnly"] !== "boolean") return null;
+    checkOnly = input["checkOnly"];
+  }
+
+  return { ...(names === undefined ? {} : { names }), checkOnly };
 }
 
 function isCancel(data: JsonValue): boolean {

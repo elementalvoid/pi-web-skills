@@ -60,30 +60,32 @@ Unmanaged skills are read-only for Update and Remove. Add may replace an existin
 28. As a PI WEB user, I want Update to refresh the lock's `updatedAt` only for changed installs, so that the lock reflects reality.
 29. As a PI WEB user, I want Update to follow a skill that moved within its source, so that an upstream reorganisation does not strand an install.
 
+30. As a PI WEB user, I want Check for updates to report what would change without writing anything, so that I can preview an update safely.
+
 ### Remove
 
-30. As a PI WEB user, I want Remove to delete both the directory and its lock entry, so that the skill is fully gone.
-31. As a PI WEB user, I want Remove on a broken entry to delete only the stale entry, so that cleanup does not require a global restore.
-32. As a PI WEB user, I want Remove unavailable for unmanaged skills, so that the panel cannot delete hand-managed files.
-33. As a PI WEB user, I want a confirmation before Remove, so that a misclick does not destroy an install.
+31. As a PI WEB user, I want Remove to delete both the directory and its lock entry, so that the skill is fully gone.
+32. As a PI WEB user, I want Remove on a broken entry to delete only the stale entry, so that cleanup does not require a global restore.
+33. As a PI WEB user, I want Remove unavailable for unmanaged skills, so that the panel cannot delete hand-managed files.
+34. As a PI WEB user, I want a confirmation before Remove, so that a misclick does not destroy an install.
 
 ### Long operations
 
-34. As a PI WEB user, I want a progress view for Add and Update, so that a slow clone does not look like a hung panel.
-35. As a PI WEB user, I want to cancel a running Add or Update, so that I can stop a slow or mistaken operation.
-36. As a PI WEB user, I want the previous install left intact if an update is cancelled or fails mid-copy, so that I never end up with a half-written skill.
-37. As a PI WEB user, I want a clear error when a source cannot be resolved, cloned, or read, so that I can correct the input.
+35. As a PI WEB user, I want a progress view for Add and Update, so that a slow clone does not look like a hung panel.
+36. As a PI WEB user, I want to cancel a running Add or Update, so that I can stop a slow or mistaken operation.
+37. As a PI WEB user, I want the previous install left intact if an update is cancelled or fails mid-copy, so that I never end up with a half-written skill.
+38. As a PI WEB user, I want a clear error when a source cannot be resolved, cloned, or read, so that I can correct the input.
 
 ### Trust and machine state
 
-38. As a PI WEB user, I want to be told that installed skills need `/reload` in each idle session, so that I know why Pi has not picked them up.
-39. As a machine owner, I want the plugin to write only the managed directory and the global lock, so that no other agent's directory is touched.
-40. As a machine owner, I want the plugin to preserve lock fields it does not understand, so that upgrading does not drop `dismissed` or `lastSelectedAgents`.
-41. As a machine owner, I want the plugin to send no telemetry and make no network calls except git operations, GitHub tree lookups, and skills.sh search, so that I can reason about its network surface.
-42. As a Pi agent, I want the same lock format the `skills` CLI writes, so that the CLI and the panel agree on what is installed.
-43. As a plugin maintainer, I want the vendored upstream modules pinned and provably unmodified, so that upstream fixes can be re-applied without guessing what changed.
-44. As a plugin maintainer, I want operation tests to run against a temporary HOME and local git sources, so that tests are deterministic and never touch the real machine.
-45. As a plugin maintainer, I want parity tests against the real CLI, so that lock-compatibility regressions fail before release.
+39. As a PI WEB user, I want to be told that installed skills need `/reload` in each idle session, so that I know why Pi has not picked them up.
+40. As a machine owner, I want the plugin to write only the managed directory and the global lock, so that no other agent's directory is touched.
+41. As a machine owner, I want the plugin to preserve lock fields it does not understand, so that upgrading does not drop `dismissed` or `lastSelectedAgents`.
+42. As a machine owner, I want the plugin to send no telemetry and make no network calls except git operations, GitHub tree lookups, and skills.sh search, so that I can reason about its network surface.
+43. As a Pi agent, I want the same lock format the `skills` CLI writes, so that the CLI and the panel agree on what is installed.
+44. As a plugin maintainer, I want the vendored upstream modules pinned and provably unmodified, so that upstream fixes can be re-applied without guessing what changed.
+45. As a plugin maintainer, I want operation tests to run against a temporary HOME and local git sources, so that tests are deterministic and never touch the real machine.
+46. As a plugin maintainer, I want parity tests against the real CLI, so that lock-compatibility regressions fail before release.
 
 ## Implementation Decisions
 
@@ -116,7 +118,7 @@ Requests:
 Channels:
 
 - `add` → client opens with `{ source: string }`. The server resolves and streams candidates in bounded pages (about 25 per frame) ending with a `candidates-end` frame, so one frame never approaches the host's 64 KiB channel limit. The client sends `{ type: "install", sourcePaths: string[] }`. The server sends `{ type: "progress", phase, name, index, total }` per skill, then `{ type: "done", installed, replaced, failed }`. The client may send `{ type: "cancel" }` at any point. A terminal `done` or `error` frame completes the channel; the server removes the temp clone before the host closes it.
-- `update` → client opens with `{ names?: string[] }`; omitted names and an explicit empty list both mean every managed entry. The server sends `{ type: "progress", name, state, reason? }` with state `checking | updating | unchanged | skipped | deleted | failed`, then `{ type: "done", updated, unchanged, skipped, deleted, failed }`. The client may send `{ type: "cancel" }`.
+- `update` → client opens with `{ names?: string[], checkOnly?: boolean }`; omitted names and an explicit empty list both mean every managed entry. `checkOnly` runs the preflight and never writes. The server sends `{ type: "progress", name, state, reason? }` with state `checking | updating | available | unchanged | skipped | deleted | failed`, then `{ type: "done", updated, available, unchanged, skipped, deleted, failed }`. The client may send `{ type: "cancel" }`.
 - Every frame and every request input is validated against a small typed schema. Unknown operations, unknown frame types, and malformed payloads produce a structured error rather than a crash.
 - A channel frame is JSON only and bounded to the host's 64 KiB frame size. Results are summaries; descriptions are capped and sanitised; long lists are paged.
 - The host bounds each channel open and receive callback to about 10 s. Those handlers return immediately; clone, install, and update work runs asynchronously on the channel lifetime signal and streams progress. No long operation is awaited inside an open or receive callback.
@@ -167,7 +169,8 @@ Channels:
 - Compare each entry's `skillFolderHash` with the remote folder hash. Match by skill name across the current source before declaring anything deleted: a name found at a different path is relocated, not deleted. A name absent from the current source marks the skill deleted upstream: report it, never delete its install or entry.
 - If the skill is found at a different path in the same source, mark it relocated: update `skillPath` as part of the update.
 - Apply only changed and relocated skills. Clone the group at the ref when content is needed, then replace each install through the same safe copier and atomic swap used by Add. Preserve `installedAt`; set `updatedAt` now for each replaced skill.
-- Update is not a dry run and there is no separate Check action. The panel confirms before starting, stating that a remote change can overwrite a local edit. Cancellation stops after the current skill and reports partial results.
+- Update all is not a dry run. The panel confirms before starting, stating that a remote change can overwrite a local edit. Cancellation stops after the current skill and reports partial results.
+- Check for updates is a read-only preflight. It fetches the locked ref, compares the same folder hashes, and reports `available`, `unchanged`, `skipped`, `deleted`, and `failed` entries without copying, swapping, or writing the lock. It needs no confirmation because it changes nothing. See ADR 0005.
 - A group that cannot be fetched is reported as failed with a reason; other groups continue.
 
 ### Remove
@@ -213,7 +216,7 @@ Good tests assert external behaviour: the contents of the managed directory, the
 - **List:** fixtures for managed, unmanaged, broken, invalid frontmatter, nested skills, and a lock key that sanitises to a different folder name. Assert classifications and that no files change.
 - **Lockfile:** missing, malformed, unknown fields, atomic write, preserved `dismissed` / `lastSelectedAgents`, and no version downgrade.
 - **Add:** local git fixture with one and several skills; candidates and hashes; install and lock entry; overwrite of managed and unmanaged targets; duplicate names; symlink and `.git` exclusion; cleanup on success, error, and cancel. A GitHub source uses a fake tree response; a generic git source uses the content hash.
-- **Update:** changed and unchanged hashes; every skip reason; deleted upstream reported and not removed; relocated path; local edit overwritten only when the remote changed; `updatedAt` only on change; cancellation after a completed skill.
+- **Update:** changed and unchanged hashes; every skip reason; deleted upstream reported and not removed; relocated path; local edit overwritten only when the remote changed; `updatedAt` only on change; cancellation after a completed skill; check-only reports available changes while leaving the install, lock, and timestamps untouched.
 - **Remove:** managed removal, broken cleanup, unmanaged refusal, missing directory, symlink refusal, preserved lock extras.
 - **Search:** valid response, non-2xx, malformed JSON, abort, sanitisation, sort order.
 - **Parity:** install the same generic git source into two temporary HOMEs, one with the real `skills` CLI and one with the plugin, and compare the lock after normalising timestamps. Cover update decisions with changed/unchanged hashes and a mocked GitHub tree. Cover removal, broken cleanup, and unmanaged protection as filesystem tests.
@@ -225,7 +228,7 @@ Good tests assert external behaviour: the contents of the managed directory, the
 - Project installs, `skills-lock.json`, workspace-scoped skills, and any notion of a project root.
 - The Pi-native directory (`$PI_CODING_AGENT_DIR/skills`) and any other agent's directory.
 - Local directory sources, well-known skill URLs, archives, direct file downloads, and hosted artifact URLs.
-- Adoption of unmanaged skills, pinning or unpinning, candidate/version scanning, drift detection, sidecars, extra lock fields, global restore, and a read-only Check action.
+- Adoption of unmanaged skills, pinning or unpinning, candidate/version scanning, drift detection, sidecars, extra lock fields, and global restore.
 - Collision warnings across scopes, because there is only one scope.
 - Automatic session reload, session messaging, a companion Pi extension, and telemetry.
 - Broad browser test matrices, screenshot baselines, and cross-browser coverage. One Playwright smoke test of the panel is in scope; it is not a browser test suite.

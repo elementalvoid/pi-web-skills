@@ -128,7 +128,7 @@ test("the update channel is routed and rejects malformed input without network w
   assert.deepEqual(frames, [
     {
       type: "error",
-      error: { code: "invalid-input", message: "update takes { names?: string[] }." },
+      error: { code: "invalid-input", message: "update takes { names?: string[], checkOnly?: boolean }." },
     },
   ]);
 });

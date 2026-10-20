@@ -15,9 +15,11 @@ type FailureNote = { readonly name: string; readonly message: string };
 
 type UpdateState = {
   phase: UpdatePhase;
+  mode: "update" | "check";
   message: string;
   current: string | null;
   updated: string[];
+  available: string[];
   unchanged: string[];
   skipped: SkipNote[];
   deleted: string[];
@@ -40,8 +42,8 @@ const CONFIRMATION =
   "Update checks every managed skill at its locked ref and replaces a skill only when its remote folder changed. A remote change replaces the installed folder, so any local edit to a changed skill is overwritten.";
 
 /**
- * The Update all panel. Update is not a dry run: the confirmation names the
- * local-edit risk before any channel opens, and there is no Check action.
+ * Update all replaces changed installs after a confirmation. Check for updates
+ * is a read-only preflight: it reports what would change and never writes.
  */
 export function createUpdatePanel(
   html: HtmlTemplateTag,
@@ -54,9 +56,11 @@ export function createUpdatePanel(
     if (state === undefined) {
       state = {
         phase: "idle",
-        message: "Update checks every managed skill and replaces only the ones that changed.",
+        mode: "update",
+        message: "Update all replaces changed installs. Check for updates only reports what would change.",
         current: null,
         updated: [],
+        available: [],
         unchanged: [],
         skipped: [],
         deleted: [],
@@ -79,6 +83,7 @@ export function createUpdatePanel(
     const state = stateFor(context);
     if (state.phase === "running") return;
     state.phase = "confirming";
+    state.mode = "update";
     state.pendingNames = names === null || names.length === 0 ? null : [...names];
     state.message =
       state.pendingNames === null
@@ -108,6 +113,11 @@ export function createUpdatePanel(
     const resultsMessage = (): string => {
       const parts: string[] = [];
       if (state.updated.length > 0) parts.push(`Updated ${state.updated.join(", ")}`);
+      if (state.available.length > 0) {
+        parts.push(
+          `${String(state.available.length)} update${state.available.length === 1 ? "" : "s"} available`,
+        );
+      }
       if (state.unchanged.length > 0) parts.push(`${String(state.unchanged.length)} unchanged`);
       if (state.skipped.length > 0) parts.push(`${String(state.skipped.length)} skipped`);
       if (state.deleted.length > 0) parts.push(`${String(state.deleted.length)} deleted upstream (kept)`);
@@ -118,7 +128,7 @@ export function createUpdatePanel(
     const finish = (prefix: string | null) => {
       const summary = resultsMessage();
       state.message = prefix === null ? `${summary}.` : `${prefix} ${summary}.`;
-      state.reloadReminder = state.updated.length > 0;
+      state.reloadReminder = state.mode === "update" && state.updated.length > 0;
       if (state.updated.length > 0) refreshSkillList(context);
     };
 
@@ -144,7 +154,10 @@ export function createUpdatePanel(
         }
         if (frame.state === "checking") state.message = `Checking ${frame.name}…`;
         else if (frame.state === "updating") state.message = `Updating ${frame.name}…`;
-        else if (frame.state === "unchanged") {
+        else if (frame.state === "available") {
+          if (!state.available.includes(frame.name)) state.available.push(frame.name);
+          state.message = `Update available for ${frame.name}.`;
+        } else if (frame.state === "unchanged") {
           if (!state.unchanged.includes(frame.name)) state.unchanged.push(frame.name);
           state.message = `${frame.name} is unchanged.`;
         } else if (frame.state === "skipped") {
@@ -172,6 +185,7 @@ export function createUpdatePanel(
         state.pendingUpdate = null;
         state.pendingNames = null;
         state.updated = [...new Set([...state.updated, ...frame.updated])];
+        state.available = [...new Set([...state.available, ...frame.available])];
         state.unchanged = [...new Set([...state.unchanged, ...frame.unchanged])];
         state.skipped = frame.skipped.length > 0 ? [...frame.skipped] : state.skipped;
         state.deleted = [...new Set([...state.deleted, ...frame.deleted])];
@@ -188,7 +202,7 @@ export function createUpdatePanel(
       render();
     };
 
-    const start = async () => {
+    const start = async (checkOnly: boolean) => {
       const peer = context.peer;
       if (peer?.openChannel === undefined) {
         state.phase = "error";
@@ -197,9 +211,11 @@ export function createUpdatePanel(
         return;
       }
       state.phase = "running";
+      state.mode = checkOnly ? "check" : "update";
       state.message = "Checking managed skills…";
       state.current = null;
       state.updated = [];
+      state.available = [];
       state.unchanged = [];
       state.skipped = [];
       state.deleted = [];
@@ -216,7 +232,10 @@ export function createUpdatePanel(
       try {
         const channel = await peer.openChannel(
           "update",
-          names === null ? {} : { names },
+          {
+            ...(names === null ? {} : { names }),
+            ...(checkOnly ? { checkOnly: true } : {}),
+          },
           { onData: (data) => onFrame(data), signal: pending.signal },
         );
         if (state.pending === pending) state.pending = null;
@@ -230,7 +249,7 @@ export function createUpdatePanel(
           state.channel = null;
           if (state.phase === "running") {
             state.phase = "error";
-            state.message = "The update stopped. Run Update all again to retry.";
+            state.message = "The update stopped. Try again to retry.";
           }
           render();
         });
@@ -254,7 +273,11 @@ export function createUpdatePanel(
         state.pendingUpdate = null;
         state.current = null;
         state.phase = "done";
-        finish("The update was cancelled after the current skill.");
+        finish(
+          state.mode === "check"
+            ? "The check was cancelled."
+            : "The update was cancelled after the current skill.",
+        );
       }
       closeChannel(state, "cancelled");
       render();
@@ -262,6 +285,7 @@ export function createUpdatePanel(
 
     const hasResults =
       state.updated.length > 0 ||
+      state.available.length > 0 ||
       state.unchanged.length > 0 ||
       state.skipped.length > 0 ||
       state.deleted.length > 0 ||
@@ -283,7 +307,7 @@ export function createUpdatePanel(
               </p>
               <p>${CONFIRMATION}</p>
               <div class="skills-actions">
-                <button type="button" class="skills-primary" @click=${() => void start()}>
+                <button type="button" class="skills-primary" @click=${() => void start(false)}>
                   Confirm update
                 </button>
                 <button
@@ -302,8 +326,13 @@ export function createUpdatePanel(
             `
           : state.phase === "running"
             ? html`<button type="button" class="skills-danger" @click=${cancel}>Cancel</button>`
-            : html`<button type="button" class="skills-primary" @click=${() =>
-                requestUpdate(context, null)}>Update all</button>`}
+            : html`<div class="skills-actions">
+                <button type="button" class="skills-primary" @click=${() =>
+                  requestUpdate(context, null)}>Update all</button>
+                <button type="button" @click=${() => void start(true)}>
+                  Check for updates
+                </button>
+              </div>`}
 
         ${hasResults
           ? html`
@@ -314,6 +343,17 @@ export function createUpdatePanel(
                     <ul>
                       ${state.updated.map((name) => html`<li><strong>${name}</strong></li>`)}
                     </ul>
+                  `}
+              ${state.available.length === 0
+                ? null
+                : html`
+                    <h4>Updates available (${String(state.available.length)})</h4>
+                    <p>These skills would be replaced by Update all. Nothing was changed.</p>
+                    <ul>
+                      ${state.available.map((name) => html`<li><strong>${name}</strong></li>`)}
+                    </ul>
+                    <button type="button" class="skills-primary" @click=${() =>
+                      requestUpdate(context, null)}>Update all</button>
                   `}
               ${state.unchanged.length === 0
                 ? null
@@ -352,7 +392,11 @@ export function createUpdatePanel(
                       )}
                     </ul>
                   `}
-              <button type="button" @click=${() => refreshSkillList(context)}>Refresh list</button>
+              ${state.updated.length === 0
+                ? null
+                : html`<button type="button" @click=${() => refreshSkillList(context)}>
+                    Refresh list
+                  </button>`}
             `
           : null}
 
@@ -388,6 +432,7 @@ type ServerFrame =
   | {
       readonly type: "done";
       readonly updated: string[];
+      readonly available: string[];
       readonly unchanged: string[];
       readonly skipped: SkipNote[];
       readonly deleted: string[];
@@ -411,12 +456,14 @@ function readFrame(data: JsonValue): ServerFrame | null {
   }
   if (type === "done") {
     const updated = readNames(data["updated"]);
+    const available = readNames(data["available"]);
     const unchanged = readNames(data["unchanged"]);
     const skipped = readSkips(data["skipped"]);
     const deleted = readNames(data["deleted"]);
     const failed = readFailures(data["failed"]);
     if (
       updated === null ||
+      available === null ||
       unchanged === null ||
       skipped === null ||
       deleted === null ||
@@ -424,7 +471,7 @@ function readFrame(data: JsonValue): ServerFrame | null {
     ) {
       return null;
     }
-    return { type: "done", updated, unchanged, skipped, deleted, failed };
+    return { type: "done", updated, available, unchanged, skipped, deleted, failed };
   }
   if (type === "error") {
     const error = data["error"];

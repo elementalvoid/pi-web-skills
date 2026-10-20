@@ -31,7 +31,9 @@ Five operations:
   Replacing an existing folder requires an explicit overwrite confirmation.
 - **Search** skills.sh by keyword and start an Add from a result.
 - **Update** every managed install by comparing the remote folder hash at the
-  locked ref. Update has no dry-run: the confirmation states that a remote change
+  locked ref. **Check for updates** is a read-only preflight: it reports
+  available, unchanged, skipped, deleted, and failed entries without copying or
+  writing anything. **Update all** asks first and states that a remote change
   replaces the installed folder and can overwrite a local edit. Changed and
   relocated skills are replaced; unchanged, skipped, deleted-upstream, and failed
   entries are reported separately.
@@ -123,6 +125,7 @@ dependency used only for parity fixtures.
 - [ADR 0002: Upstream parity through a thin reimplementation](docs/adr/0002-upstream-parity-thin-reimplementation.md)
 - [ADR 0003: "Pi-only" means the universal directory](docs/adr/0003-pi-only-uses-the-universal-directory.md)
 - [ADR 0004: Update follows upstream](docs/adr/0004-upstream-update-semantics.md)
+- [ADR 0005: Check for updates is read-only](docs/adr/0005-read-only-update-check.md)
 - [Vocabulary](GLOSSARY.md)
 - [Verified upstream behavior and vendoring plan](docs/upstream-parity.md)
 - [Local development and testing](docs/local-development.md)

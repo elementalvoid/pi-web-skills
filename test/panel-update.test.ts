@@ -163,6 +163,45 @@ test("a per-row Update request confirms and sends only that skill", async () => 
   assert.deepEqual(host.inputs, [{ names: ["demo"] }]);
 });
 
+test("Check for updates starts a read-only check and reports available updates", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const host: Host = {
+    channelOptions: [],
+    operations: [],
+    inputs: [],
+    channelOpen: async () => fakeChannel(sent, closeReasons),
+  };
+  const panel = createUpdatePanel(html);
+  const context = panelContext(host);
+
+  click(panel(context), "Check for updates");
+  await tick();
+  assert.deepEqual(host.operations, ["update"]);
+  assert.deepEqual(host.inputs, [{ checkOnly: true }], "no confirmation and no names");
+
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "progress", name: "beta", state: "checking" });
+  onData({ type: "progress", name: "beta", state: "available" });
+  onData({
+    type: "done",
+    updated: [],
+    available: ["beta"],
+    unchanged: [],
+    skipped: [],
+    deleted: [],
+    failed: [],
+  });
+
+  const text = textOf(panel(context));
+  assert.match(text, /Updates available \(1\)/);
+  assert.match(text, /beta/);
+  assert.match(text, /Nothing was changed/);
+  assert.doesNotMatch(text, /\/reload/);
+  assert.deepEqual(closeReasons, ["done"]);
+});
+
 test("frames show per-skill progress and grouped results with the /reload reminder", async () => {
   const sent: JsonValue[] = [];
   const closeReasons: string[] = [];
@@ -196,6 +235,7 @@ test("frames show per-skill progress and grouped results with the /reload remind
   onData({
     type: "done",
     updated: ["notes"],
+    available: [],
     unchanged: ["alpha"],
     skipped: [{ name: "beta", reason: "Local path" }],
     deleted: ["gamma"],

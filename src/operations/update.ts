@@ -36,12 +36,20 @@ export type UpdateFrame =
   | {
       readonly type: "progress";
       readonly name: string;
-      readonly state: "checking" | "updating" | "unchanged" | "skipped" | "deleted" | "failed";
+      readonly state:
+        | "checking"
+        | "updating"
+        | "available"
+        | "unchanged"
+        | "skipped"
+        | "deleted"
+        | "failed";
       readonly reason?: string;
     }
   | {
       readonly type: "done";
       readonly updated: readonly string[];
+      readonly available: readonly string[];
       readonly unchanged: readonly string[];
       readonly skipped: readonly UpdateSkip[];
       readonly deleted: readonly string[];
@@ -52,6 +60,8 @@ export type UpdateFrame =
 export type UpdateContext = OperationContext & {
   /** Omitted or empty means every entry the lock records. */
   readonly names?: readonly string[] | undefined;
+  /** Report what would change without copying or writing anything. */
+  readonly checkOnly?: boolean | undefined;
   readonly exec: ExecFile;
   readonly tempRoot: string;
   readonly fetch: FetchLike;
@@ -70,6 +80,7 @@ export type UpdateSession = {
 
 type Summary = {
   readonly updated: string[];
+  readonly available: string[];
   readonly unchanged: string[];
   readonly skipped: UpdateSkip[];
   readonly deleted: string[];
@@ -136,7 +147,14 @@ export function createUpdateSession(
   };
 
   async function run(): Promise<void> {
-    const summary: Summary = { updated: [], unchanged: [], skipped: [], deleted: [], failed: [] };
+    const summary: Summary = {
+      updated: [],
+      available: [],
+      unchanged: [],
+      skipped: [],
+      deleted: [],
+      failed: [],
+    };
     let terminal = false;
     try {
       const lock = await readLockfile(context.paths.lockfilePath);
@@ -295,6 +313,13 @@ async function updateGroup(
         // Reported, never removed: the install and its entry stay in place.
         summary.deleted.push(item.name);
         emit({ type: "progress", name: item.name, state: "deleted" });
+        continue;
+      }
+      if (context.checkOnly === true) {
+        // Read-only preflight: report the change and never clone for a copy or
+        // touch the install or lock entry.
+        summary.available.push(item.name);
+        emit({ type: "progress", name: item.name, state: "available" });
         continue;
       }
       emit({ type: "progress", name: item.name, state: "updating" });

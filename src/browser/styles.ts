@@ -9,6 +9,12 @@ export function renderSkillsStyles(
   html: HtmlTemplateTag,
 ): ReturnType<HtmlTemplateTag> {
   return html`<style>
+    .skills-panel,
+    .skills-panel *,
+    .skills-panel *::before,
+    .skills-panel *::after {
+      box-sizing: border-box;
+    }
     .skills-panel {
       display: grid;
       gap: 16px;

@@ -13,7 +13,6 @@ import type { JsonValue } from "../src/operations/errors.ts";
 import type { ExecFile, ExecFileRequest, ExecFileResult } from "../src/upstream/git.ts";
 
 const NOW = new Date("2026-02-01T12:00:00.000Z");
-const OFFLINE = "https://api.github.com/repos/offline/offline/git/trees/main?recursive=1";
 
 type Harness = { readonly root: string; readonly paths: SkillPaths; readonly tempRoot: string };
 
@@ -200,6 +199,7 @@ type RunOptions = {
   readonly paths: SkillPaths;
   readonly tempRoot: string;
   readonly names?: readonly string[];
+  readonly checkOnly?: boolean;
   readonly fetch?: typeof fetch;
   readonly exec?: ExecFile;
   readonly onFrame?: (frame: UpdateFrame, control: { cancel: () => void }) => void;
@@ -217,6 +217,7 @@ async function runUpdate(options: RunOptions): Promise<UpdateFrame[]> {
     getToken: () => null,
     now: () => NOW,
     ...(options.names === undefined ? {} : { names: options.names }),
+    ...(options.checkOnly === true ? { checkOnly: true } : {}),
   };
   const session = createUpdateSession(context, (frame) => {
     frames.push(frame);
@@ -311,6 +312,77 @@ test("a changed skill is replaced through the clone and keeps installedAt", asyn
     assert.equal(entryAfter.skillPath, "skills/beta/SKILL.md");
     assert.equal(entryAfter.updatedAt, NOW.toISOString());
     assert.equal(entryAfter.installedAt, "2026-01-01T00:00:00.000Z");
+  });
+});
+
+test("Check for updates reports a changed skill and writes nothing", async () => {
+  await withHarness(async (harness) => {
+    const repo = await createRepo(harness.root, [{ name: "beta", folder: "beta", body: "remote v2" }]);
+    const remoteHash = await repo.hash("skills/beta");
+    await writeLock(harness.paths, {
+      beta: entry({
+        sourceUrl: repo.url,
+        ref: repo.branch,
+        skillPath: "skills/beta/SKILL.md",
+        skillFolderHash: "a".repeat(40),
+      }),
+    });
+    await installFixture(harness.paths, "beta", "local edit");
+
+    const frames = await runUpdate({
+      paths: harness.paths,
+      tempRoot: harness.tempRoot,
+      checkOnly: true,
+      fetch: treeFetch("owner/repo", {
+        sha: "tree-sha",
+        tree: [
+          { path: "skills/beta/SKILL.md", type: "blob", sha: "blob-sha" },
+          { path: "skills/beta", type: "tree", sha: remoteHash },
+        ],
+      }),
+    });
+
+    const done = doneFrame(frames);
+    assert.deepEqual(done.available, ["beta"]);
+    assert.deepEqual(done.updated, []);
+    assert.deepEqual(progress(frames), [
+      { name: "beta", state: "checking" },
+      { name: "beta", state: "available" },
+    ]);
+    assert.match(await readSkill(harness.paths, "beta"), /local edit/);
+    const saved = await readLock(harness.paths);
+    assert.equal(saved.skills.beta.skillFolderHash, "a".repeat(40), "the lock is untouched");
+    assert.equal(saved.skills.beta.updatedAt, "2026-01-02T00:00:00.000Z");
+  });
+});
+
+test("Check for updates falls back to a clone without replacing the install", async () => {
+  await withHarness(async (harness) => {
+    const repo = await createRepo(harness.root, [{ name: "beta", folder: "beta", body: "remote v2" }]);
+    await writeLock(harness.paths, {
+      beta: entry({
+        sourceUrl: repo.url,
+        ref: repo.branch,
+        skillPath: "skills/beta/SKILL.md",
+        skillFolderHash: "a".repeat(40),
+      }),
+    });
+    await installFixture(harness.paths, "beta", "local edit");
+    const calls: ExecFileRequest[] = [];
+
+    const frames = await runUpdate({
+      paths: harness.paths,
+      tempRoot: harness.tempRoot,
+      checkOnly: true,
+      exec: makeExec({ calls }),
+      fetch: offlineFetch,
+    });
+
+    assert.deepEqual(doneFrame(frames).available, ["beta"]);
+    assert.deepEqual(doneFrame(frames).updated, []);
+    assert.match(await readSkill(harness.paths, "beta"), /local edit/);
+    assert.equal((await readLock(harness.paths)).skills.beta.updatedAt, "2026-01-02T00:00:00.000Z");
+    assert.ok(calls.some((call) => call.file === "git" && (call.args ?? []).includes("clone")));
   });
 });
 
@@ -752,7 +824,7 @@ test("the channel rejects a malformed input or frame with a structured error", a
     const malformed = openChannel({ names: 42 }, paths, tempRoot, frames);
     await malformed.close();
     assert.deepEqual(frames, [
-      { type: "error", error: { code: "invalid-input", message: "update takes { names?: string[] }." } },
+      { type: "error", error: { code: "invalid-input", message: "update takes { names?: string[], checkOnly?: boolean }." } },
     ]);
 
     frames.length = 0;

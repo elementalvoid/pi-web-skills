@@ -68,3 +68,7 @@ Commands:
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
 - `npm test` — pass, 187 tests total; 1 new.
+
+## Comments
+
+- 2026-10-20: Post-implementation UI request added **Check for updates**, a read-only preflight. It shares the update decision logic but never copies, swaps, or writes the lock. Update all remains non-dry-run. The earlier "no Check-only action" line is superseded by [ADR 0005](../../../docs/adr/0005-read-only-update-check.md); coverage is in `test/update.test.ts` and `test/panel-update.test.ts`.

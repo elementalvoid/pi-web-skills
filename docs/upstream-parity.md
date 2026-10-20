@@ -66,7 +66,7 @@ Path: `~/.agents/.skill-lock.json`, or `$XDG_STATE_HOME/skills/.skill-lock.json`
 - Other source types are skipped or out of scope. Show the upstream skip reason for local paths, generic git URLs, entries without a hash, and entries without a path.
 - Re-fetch the lock's `ref`, compare the remote folder hash, and replace only changed installs.
 - Deleted upstream skills are reported, not deleted non-interactively.
-- `skills check` is not read-only: in 1.7.4 it dispatches to the same `runUpdate` path. Do not expose a separate Check button.
+- `skills check` is not read-only: in 1.7.4 it dispatches to the same `runUpdate` path. The panel's **Check for updates** is a separate, panel-only preflight implemented in the update session. It shares the hash decision but never copies, swaps, or writes the lock. It is not the CLI's check path.
 
 ### Remove
 
