@@ -196,6 +196,7 @@ Channels:
 - Vendor the pinned pure modules from `vercel-labs/skills` v1.7.4, commit `a80e4c9d12d607631249d4d7d059f835d4b2f13a`, verbatim: source parser, GitHub host, blob/tree, skills, frontmatter, sanitize, constants, plugin manifest, skill lock, local lock, update source, and types. Include upstream `LICENSE` and a `PROVENANCE.md` with source URL, commit, file list, and the "copied verbatim; do not edit" rule.
 - The vendored modules are a backport, not a fork. If behaviour must change, wrap or replace at the operation layer; do not patch vendor files. When upstream ships an exported API, the operation layer can be replaced without UI changes.
 - `yaml` is the only runtime dependency. `skills@1.7.4` stays a dev dependency for parity fixtures. No runtime execution of the CLI.
+- The vendored files assign `undefined` to optional properties, so the repo turns `exactOptionalPropertyTypes` off; every other strict flag stays on. Do not patch vendor files or add a second tsconfig project just for this.
 
 ### Build and test
 
