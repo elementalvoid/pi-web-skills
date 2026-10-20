@@ -24,6 +24,8 @@ type UpdateState = {
   failed: FailureNote[];
   channel: PluginPeerChannel | null;
   pending: AbortController | null;
+  /** The skill whose `updating` frame arrived; the next frame proves its swap finished. */
+  pendingUpdate: string | null;
   reloadReminder: boolean;
 };
 
@@ -54,6 +56,7 @@ export function createUpdatePanel(
         failed: [],
         channel: null,
         pending: null,
+        pendingUpdate: null,
         reloadReminder: false,
       };
       states.set(key, state);
@@ -71,6 +74,31 @@ export function createUpdatePanel(
       channel?.close(reason);
     };
 
+    // `updating` is the only frame a replaced skill gets before the next skill starts.
+    const settlePendingUpdate = () => {
+      const name = state.pendingUpdate;
+      if (name === null) return;
+      state.pendingUpdate = null;
+      if (!state.updated.includes(name)) state.updated.push(name);
+    };
+
+    const resultsMessage = (): string => {
+      const parts: string[] = [];
+      if (state.updated.length > 0) parts.push(`Updated ${state.updated.join(", ")}`);
+      if (state.unchanged.length > 0) parts.push(`${String(state.unchanged.length)} unchanged`);
+      if (state.skipped.length > 0) parts.push(`${String(state.skipped.length)} skipped`);
+      if (state.deleted.length > 0) parts.push(`${String(state.deleted.length)} deleted upstream (kept)`);
+      if (state.failed.length > 0) parts.push(`${String(state.failed.length)} failed`);
+      return parts.join(". ") || "No managed skills to update";
+    };
+
+    const finish = (prefix: string | null) => {
+      const summary = resultsMessage();
+      state.message = prefix === null ? `${summary}.` : `${prefix} ${summary}.`;
+      state.reloadReminder = state.updated.length > 0;
+      if (state.updated.length > 0) refreshSkillList(context);
+    };
+
     const onFrame = (data: JsonValue) => {
       const frame = readFrame(data);
       if (frame === null) {
@@ -82,6 +110,15 @@ export function createUpdatePanel(
       }
       if (frame.type === "progress") {
         state.current = frame.name;
+        if (frame.state === "updating") {
+          settlePendingUpdate();
+          state.pendingUpdate = frame.name;
+        } else if (state.pendingUpdate === frame.name) {
+          // A `failed` frame belongs to the copy in flight, so it is not updated.
+          state.pendingUpdate = null;
+        } else {
+          settlePendingUpdate();
+        }
         if (frame.state === "checking") state.message = `Checking ${frame.name}…`;
         else if (frame.state === "updating") state.message = `Updating ${frame.name}…`;
         else if (frame.state === "unchanged") {
@@ -109,22 +146,13 @@ export function createUpdatePanel(
       if (frame.type === "done") {
         state.phase = "done";
         state.current = null;
+        state.pendingUpdate = null;
         state.updated = [...new Set([...state.updated, ...frame.updated])];
         state.unchanged = [...new Set([...state.unchanged, ...frame.unchanged])];
         state.skipped = frame.skipped.length > 0 ? [...frame.skipped] : state.skipped;
         state.deleted = [...new Set([...state.deleted, ...frame.deleted])];
         state.failed = frame.failed.length > 0 ? [...frame.failed] : state.failed;
-        const parts: string[] = [];
-        if (state.updated.length > 0) {
-          parts.push(`Updated ${state.updated.join(", ")}`);
-        }
-        if (state.unchanged.length > 0) parts.push(`${String(state.unchanged.length)} unchanged`);
-        if (state.skipped.length > 0) parts.push(`${String(state.skipped.length)} skipped`);
-        if (state.deleted.length > 0) parts.push(`${String(state.deleted.length)} deleted upstream (kept)`);
-        if (state.failed.length > 0) parts.push(`${String(state.failed.length)} failed`);
-        state.message = `${parts.join(". ") || "No managed skills to update"}.`;
-        state.reloadReminder = state.updated.length > 0;
-        if (state.updated.length > 0) refreshSkillList(context);
+        finish(null);
         closeChannel(state, "done");
         render();
         return;
@@ -151,6 +179,7 @@ export function createUpdatePanel(
       state.skipped = [];
       state.deleted = [];
       state.failed = [];
+      state.pendingUpdate = null;
       state.reloadReminder = false;
       closeChannel(state, "replaced");
       render();
@@ -193,8 +222,11 @@ export function createUpdatePanel(
       pending?.abort();
       if (state.phase === "running") {
         state.channel?.send({ type: "cancel" });
-        state.message = "The update was cancelled after the current skill.";
+        // The interrupted skill's swap may or may not have happened: never count it.
+        state.pendingUpdate = null;
+        state.current = null;
         state.phase = "done";
+        finish("The update was cancelled after the current skill.");
       }
       closeChannel(state, "cancelled");
       render();

@@ -22,7 +22,7 @@ export type TreeRequest = {
  * The token resolver is tried first, then `gh api` through the bounded exec
  * adapter; a null answer means the caller must clone and hash the checkout.
  */
-export async function fetchRepoTree(request: TreeRequest): Promise<RepoTree | null> {
+export async function fetchGitHubTree(request: TreeRequest): Promise<RepoTree | null> {
   const branches = request.ref === undefined ? ["HEAD", "main", "master"] : [request.ref];
   const token = request.getToken();
   for (const branch of branches) {

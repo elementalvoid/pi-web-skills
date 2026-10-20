@@ -224,3 +224,42 @@ test("Cancel sends a cancel frame and keeps the partial results", async () => {
   assert.match(text, /cancelled after the current skill/);
   assert.match(text, /Unchanged \(1\)/, "partial results stay visible");
 });
+
+test("Cancel keeps a skill that already updated and still reminds /reload", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const host: Host = {
+    channelOptions: [],
+    operations: [],
+    inputs: [],
+    channelOpen: async () => fakeChannel(sent, closeReasons),
+  };
+  const panel = createUpdatePanel(html) as unknown as (
+    context: WorkspacePanelContext,
+  ) => FakeTemplate;
+  const context = panelContext(host);
+
+  click(panel(context), "Update all");
+  click(panel(context), "Confirm update");
+  await tick();
+
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "progress", name: "alpha", state: "checking" });
+  onData({ type: "progress", name: "beta", state: "checking" });
+  onData({ type: "progress", name: "alpha", state: "updating" });
+  onData({ type: "progress", name: "beta", state: "updating" });
+
+  click(panel(context), "Cancel");
+  assert.deepEqual(sent, [{ type: "cancel" }]);
+
+  const render = panel(context);
+  const text = textOf(render);
+  assert.match(text, /cancelled after the current skill/);
+  assert.match(text, /Updated \(1\)/, "the completed skill is kept after cancelling");
+  const results = collect(render).find((node) => /Updated \(1\)/.test(textOf(node)));
+  assert.ok(results !== undefined);
+  assert.match(textOf(results), /alpha/);
+  assert.doesNotMatch(textOf(results), /beta/, "the interrupted skill is not reported as updated");
+  assert.match(text, /\/reload/, "an updated skill still needs a reload reminder");
+});

@@ -1,11 +1,10 @@
-import { readdir } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import type { RepoTree } from "../vendor/skills/blob.ts";
 import { getSkillFolderHashFromTree } from "../vendor/skills/blob.ts";
 import { discoverSkills } from "../vendor/skills/skills.ts";
 import type { ParsedSource } from "../vendor/skills/types.ts";
 import type { FetchLike } from "../upstream/github-tree.ts";
-import { fetchRepoTree } from "../upstream/github-tree.ts";
+import { fetchGitHubTree } from "../upstream/github-tree.ts";
 import type { ExecFile } from "../upstream/git.ts";
 import { cloneSource, computeGitFolderHash } from "../upstream/git.ts";
 import { installSkillDirectory } from "../upstream/install.ts";
@@ -15,14 +14,15 @@ import type { OperationError, Result } from "./errors.ts";
 import { operationError } from "./errors.ts";
 import type { LockEntry, LockDocument } from "./lockfile.ts";
 import { mutateLockfile, readLockfile } from "./lockfile.ts";
-import { matchSkillName, sanitizeName } from "./matching.ts";
+import { discoverSkillDirectories } from "./list.ts";
+import { matchSkillName, resolveInstallTarget } from "./matching.ts";
 
 /** The upstream skip reasons, in the order upstream checks them. */
 const SKIP_REASONS = {
   local: "Local path",
   git: "Git URL",
   wellKnown: "Well-known skill",
-  noHash: "Private or deleted repo",
+  privateOrDeleted: "Private or deleted repo",
   noPath: "No skill path recorded",
   untracked: "No version tracking",
 } as const;
@@ -100,7 +100,7 @@ export function getSkipReason(entry: LockEntry): string | null {
   if (entry.sourceType === "local") return SKIP_REASONS.local;
   if (entry.sourceType === "git") return SKIP_REASONS.git;
   if (entry.sourceType === "well-known") return SKIP_REASONS.wellKnown;
-  if (!entry.skillFolderHash) return SKIP_REASONS.noHash;
+  if (!entry.skillFolderHash) return SKIP_REASONS.privateOrDeleted;
   if (!entry.skillPath) return SKIP_REASONS.noPath;
   if (entry.sourceType !== "github") return SKIP_REASONS.untracked;
   return null;
@@ -208,7 +208,9 @@ async function runUpdate(
   }
   if (checkable.length === 0 || signal.aborted) return;
 
-  const folderNames = await presentFolders(context.paths.managedDirectory);
+  const folderNames = (await discoverSkillDirectories(context.paths.managedDirectory)).map(
+    (directory) => directory.folderName,
+  );
   for (const group of groupBySource(checkable)) {
     // Cancel stops after the current skill; no new group starts.
     if (signal.aborted) return;
@@ -315,7 +317,7 @@ async function readTree(
 ): Promise<RepoTree | null> {
   const ownerRepo = githubOwnerRepo(entry.source);
   if (ownerRepo === null) return null;
-  return fetchRepoTree({
+  return fetchGitHubTree({
     ownerRepo,
     ref: entry.ref,
     fetch: context.fetch,
@@ -437,11 +439,10 @@ async function applyChanged(
   folderNames: readonly string[],
   signal: AbortSignal,
 ): Promise<Result<null>> {
-  const folderName =
-    matchSkillName(item.name, { lockKeys: [], folderNames })?.folderName ?? sanitizeName(item.name);
+  const target = resolveInstallTarget(item.name, { lockKeys: [], folderNames });
   const copied = await installSkillDirectory(
     context.paths.managedDirectory,
-    folderName,
+    target.folderName,
     join(cloneDirectory, dirname(decision.skillPath)),
     signal,
     () => writeUpdatedEntry(context, item.name, decision),
@@ -519,18 +520,6 @@ function githubOwnerRepo(source: string): string | null {
 /** Upstream name normalisation, so a renamed folder still matches its locked skill. */
 function normalizeSkillName(name: string): string {
   return name.toLowerCase().replace(/[\s_]+/g, "-");
-}
-
-/** Names of the directories present in the managed directory; a missing directory is empty. */
-async function presentFolders(managedDirectory: string): Promise<string[]> {
-  try {
-    const entries = await readdir(managedDirectory, { withFileTypes: true });
-    const names: string[] = [];
-    for (const entry of entries) if (entry.isDirectory()) names.push(entry.name);
-    return names;
-  } catch {
-    return [];
-  }
 }
 
 function describe(error: unknown): string {
