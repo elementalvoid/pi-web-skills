@@ -24,9 +24,13 @@ type AddState = {
   candidates: CandidateView[];
   selected: Set<string>;
   channel: PluginPeerChannel | null;
+  pending: AbortController | null;
 };
 
 const EXISTING = ["none", "managed", "unmanaged"] as const;
+
+/** Ticket 05 owns install; until then the action is visible but not actionable. */
+const INSTALL_AVAILABLE = false;
 
 /**
  * The Add source and selection panel. State is per hosted panel; the channel is
@@ -46,6 +50,7 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
         candidates: [],
         selected: new Set(),
         channel: null,
+        pending: null,
       };
       states.set(key, state);
     }
@@ -56,6 +61,8 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
     const state = stateFor(context);
     const render = () => context.host.requestRender();
     const busy = state.phase === "resolving" || state.phase === "installing";
+    // A cancel must reach an open that has not resolved yet, not only a live channel.
+    const cancellable = state.pending !== null || (state.channel !== null && state.phase !== "idle");
 
     const closeChannel = (state: AddState, reason: string) => {
       const channel = state.channel;
@@ -116,12 +123,20 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
         render();
         return;
       }
+      const pending = new AbortController();
+      state.pending = pending;
       try {
         const channel = await peer.openChannel(
           "add",
           { source },
-          { onData: (data) => onFrame(data) },
+          { onData: (data) => onFrame(data), signal: pending.signal },
         );
+        if (state.pending === pending) state.pending = null;
+        if (pending.signal.aborted) {
+          // Cancel arrived while the open was in flight: close the late channel.
+          channel.close("cancelled");
+          return;
+        }
         state.channel = channel;
         void channel.closed.then(() => {
           if (state.channel !== channel) return;
@@ -133,6 +148,8 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
           render();
         });
       } catch (error) {
+        if (state.pending === pending) state.pending = null;
+        if (pending.signal.aborted) return;
         state.phase = "error";
         state.message = error instanceof Error ? error.message : String(error);
         render();
@@ -140,7 +157,16 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
     };
 
     const cancel = () => {
-      if (state.channel === null) return;
+      const pending = state.pending;
+      state.pending = null;
+      pending?.abort();
+      if (state.channel === null) {
+        if (pending === null) return;
+        state.phase = state.candidates.length === 0 ? "idle" : "candidates";
+        state.message = "The add operation was cancelled.";
+        render();
+        return;
+      }
       state.channel.send({ type: "cancel" });
       closeChannel(state, "cancelled");
       state.phase = state.candidates.length === 0 ? "idle" : "candidates";
@@ -198,14 +224,13 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
               placeholder="owner/repo, https://github.com/owner/repo, or a git URL"
               ?disabled=${busy}
               @input=${(event: Event) => {
-                if (event.target instanceof HTMLInputElement) state.source = event.target.value;
+                const target = event.target as { value?: unknown } | null;
+                if (typeof target?.value === "string") state.source = target.value;
               }}
             />
           </label>
           <button type="submit" ?disabled=${busy || state.source.trim() === ""}>Resolve</button>
-          ${state.channel === null || state.phase === "idle"
-            ? null
-            : html`<button type="button" @click=${cancel}>Cancel</button>`}
+          ${cancellable ? html`<button type="button" @click=${cancel}>Cancel</button>` : null}
         </form>
 
         ${state.phase === "error"
@@ -245,8 +270,8 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
                           ? null
                           : html`<span class="badge">
                               ${candidate.existing === "managed"
-                                ? "Already installed"
-                                : "Unmanaged — will be replaced"}
+                                ? "Already installed — an overwrite confirmation will come before install"
+                                : "Unmanaged — an overwrite confirmation will come before install"}
                             </span>`}
                         <p>${candidate.description}</p>
                         <small>${candidate.sourcePath}</small>
@@ -257,11 +282,15 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
               </fieldset>
               <button
                 type="button"
-                ?disabled=${busy || state.selected.size === 0 || state.channel === null}
+                ?disabled=${!INSTALL_AVAILABLE ||
+                busy ||
+                state.selected.size === 0 ||
+                state.channel === null}
                 @click=${install}
               >
                 Install selected (${String(state.selected.size)})
               </button>
+              <p>Install is not available yet. Selecting skills writes nothing.</p>
             `}
       </section>
     `;
