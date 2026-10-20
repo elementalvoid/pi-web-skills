@@ -8,6 +8,7 @@ import { createAddHandoff } from "./add-handoff.ts";
 import { createAddPanel } from "./add-panel.ts";
 import { renderSkillList } from "./list.ts";
 import { createSearchPanel } from "./search-panel.ts";
+import { createUpdatePanel } from "./update-panel.ts";
 
 type StatusState =
   | { readonly kind: "loading" }
@@ -25,6 +26,7 @@ const plugin = {
     const addHandoff = createAddHandoff();
     const renderAdd = createAddPanel(html, addHandoff);
     const renderSearch = createSearchPanel(html, addHandoff);
+    const renderUpdate = createUpdatePanel(html);
     const renderStatus = (status: StatusState) => {
       if (status.kind === "loading") {
         return html`<p aria-live="polite">Loading machine status…</p>`;
@@ -72,6 +74,7 @@ const plugin = {
                   ${renderStatus(status)}
                   ${renderAdd(context)}
                   ${renderSearch(context)}
+                  ${renderUpdate(context)}
                   ${renderSkillList(html, context)}
                 </section>
               `;

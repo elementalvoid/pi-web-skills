@@ -22,6 +22,7 @@ export type OperationErrorCode =
   | "not-found"
   | "not-managed"
   | "remove-failed"
+  | "update-failed"
   | "search-unavailable"
   | "search-invalid-response"
   | "cancelled";
