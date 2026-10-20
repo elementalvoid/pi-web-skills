@@ -43,3 +43,23 @@
 - "Outside the managed directory" is prevented by construction: the removal folder comes from a present folder name or `sanitizeName(lock key)`, so it is a single segment, and `assertSafeSkillDirectory` refuses a symlinked folder and any target that resolves outside the real managed directory. Tests cover a symlinked skill folder to an outside directory (refused, target intact) and a lock key shaped like traversal (the outside directory is untouched).
 - The panel sends the row's folder name for managed rows and its lock key for broken rows, so sanitised lock keys still resolve; the list read model is unchanged.
 - A successful removal writes one lockfile per name, so a multi-name request makes one atomic write per removed entry.
+
+## Comments
+
+Review fixes on `ticket/06-fix`, after merging `integration/skills-panel`:
+
+- A failed lock write no longer escapes `removeSkills`. Each name is handled inside a per-name boundary: a thrown lock write becomes a `remove-failed` result for that name, the remaining names still run, and the request still returns `{ results }` instead of rejecting. When the directory was already deleted, the failure carries `directory: "removed"` and the message says the lock entry remains, so the panel knows to refresh and show the now-broken row.
+- Remove now discovers present folders with List's own discovery (`discoverSkillDirectories`): recursive, depth 5, skipping `node_modules`, `.git`, `dist`, `build`, and `__pycache__`. A nested unmanaged directory is `not-managed`, not `not-found`, and a nested managed install is deleted at its discovered path rather than a top-level guess. Path containment gained `assertSafePresentDirectory` for a discovered relative path.
+- A broken entry whose canonical folder name is a symlink is cleaned up as an entry-only removal: the lock entry goes, and the symlink and its target are untouched. Removal deletes only a real present skill directory (a directory found by the same discovery List uses); it never follows or deletes a symlink. The `unsafe-path` containment check still applies to any matched present path.
+- The operation result now distinguishes what happened on disk: managed success and a lock failure after deletion carry `directory: "removed"`; broken cleanup carries `directory: "absent"`. The panel shows the `/reload` reminder only when a directory changed.
+- List refreshes are generation-guarded. Every load takes a new generation and only the newest response may write the list, error, notice, or row actions; `refreshSkillList` bumps the generation so it invalidates a load already in flight and the next render starts a fresh one.
+- A successful list read clears the previous notice and row actions. A second Remove confirmation click while one request is in flight is ignored.
+- The duplicate error code is unified: add's `skill-not-found` is now `not-found`, the same code remove already returns.
+
+Tests added: a lock write that fails after the first directory removal (first name failed with `directory: "removed"`, second removed, failed entry remains); a failed write with several names returns one ordered result each; a nested unmanaged directory is `not-managed`; a nested managed skill removes the nested directory; a symlinked broken folder only loses its entry; the panel refreshes to the broken row after a lock failure and shows the structured message; broken cleanup shows no `/reload` reminder; a refresh starts a second load while the first is in flight and the older response cannot overwrite it; a successful refresh clears the old notice and row action; a second confirmation click sends one request; a missing `@skill` filter reports `not-found`.
+
+Commands:
+
+- `npm run build` — pass.
+- `npm run typecheck` — pass.
+- `npm test` — pass, 153 tests total; 8 new.
