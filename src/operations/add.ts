@@ -1,4 +1,3 @@
-import { readdir } from "node:fs/promises";
 import { basename, relative, sep } from "node:path";
 import { getOwnerRepo, parseSource } from "../vendor/skills/source-parser.ts";
 import { computeSkillFolderHash } from "../vendor/skills/local-lock.ts";
@@ -12,6 +11,7 @@ import { removeTempDirectory } from "./containment.ts";
 import type { OperationContext } from "./context.ts";
 import type { OperationError, Result } from "./errors.ts";
 import { operationError } from "./errors.ts";
+import { discoverSkillDirectories } from "./list.ts";
 import type { InstallTarget } from "./matching.ts";
 import { resolveInstallTarget, sanitizeName } from "./matching.ts";
 import type { LockEntry } from "./lockfile.ts";
@@ -79,6 +79,8 @@ export type AddContext = OperationContext & {
   readonly source: string;
   readonly exec: ExecFile;
   readonly tempRoot: string;
+  /** Injectable clock for lock timestamps. */
+  readonly now?: (() => Date) | undefined;
   /** Replaces the atomic lock mutation; a test uses it to fail the write after the swap. */
   readonly mutateLock?: typeof mutateLockfile;
 };
@@ -455,7 +457,7 @@ async function writeLockEntry(
   try {
     return await mutate(context.paths.lockfilePath, (lock) => {
       const previous = lock.skills[key];
-      const now = new Date().toISOString();
+      const now = (context.now?.() ?? new Date()).toISOString();
       const next: LockEntry = {
         ...previous,
         source: normalizedSource(parsed),
@@ -488,16 +490,11 @@ function normalizedSource(parsed: ParsedSource): string {
   return getOwnerRepo(parsed) ?? parsed.url;
 }
 
-/** Names of the directories present in the managed directory; a missing directory is empty. */
+/** Names of the skill folders present under the managed directory, the same set List shows. */
 async function presentFolders(managedDirectory: string): Promise<string[]> {
-  try {
-    const entries = await readdir(managedDirectory, { withFileTypes: true });
-    const names: string[] = [];
-    for (const entry of entries) if (entry.isDirectory()) names.push(entry.name);
-    return names;
-  } catch {
-    return [];
-  }
+  return (await discoverSkillDirectories(managedDirectory)).map(
+    (directory) => directory.folderName,
+  );
 }
 
 async function contentFolderHash(skillDirectory: string): Promise<Result<string>> {

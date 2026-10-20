@@ -22,6 +22,8 @@ export type AddChannelDependencies = {
 
 export type AddPeerChannel = {
   readonly receive: (data: JsonValue, signal: AbortSignal) => void;
+  /** Resolves once a terminal frame is sent and the clone is cleaned up. */
+  readonly closed: Promise<void>;
   readonly close: () => Promise<void>;
 };
 
@@ -40,6 +42,30 @@ export function openAddChannel(
 ): AddPeerChannel {
   let closed = false;
   let session: AddSession | null = null;
+  let resolveClosed: () => void = () => {};
+  const closedSignal = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  let shutdownPromise: Promise<void> | null = null;
+
+  const shutdown = (): Promise<void> => {
+    shutdownPromise ??= (async () => {
+      const active = session;
+      session = null;
+      try {
+        if (active !== null) await active.dispose();
+      } finally {
+        resolveClosed();
+      }
+    })();
+    return shutdownPromise;
+  };
+
+  const finish = (): void => {
+    if (closed) return;
+    closed = true;
+    void shutdown().catch(() => undefined);
+  };
 
   const send = (frame: AddFrame): void => {
     if (closed) return;
@@ -48,25 +74,34 @@ export function openAddChannel(
     } catch {
       closed = true;
       session?.cancel();
+      void shutdown().catch(() => undefined);
+      return;
     }
+    // `done` and `error` are terminal: the host closes the channel after them.
+    if (frame.type === "done" || frame.type === "error") finish();
   };
   const fail = (code: OperationErrorCode, message: string): void => {
     send({ type: "error", error: operationError(code, message) });
   };
 
+  const terminalChannel = (): AddPeerChannel => ({
+    receive() {},
+    closed: closedSignal,
+    async close() {
+      closed = true;
+      await shutdown();
+    },
+  });
+
   if (context.operation !== "add") {
     fail("unknown-operation", `Unsupported channel "${context.operation}"`);
-    return inertChannel(() => {
-      closed = true;
-    });
+    return terminalChannel();
   }
 
   const source = readSourceInput(context.input);
   if (source === null) {
     fail("invalid-input", "add takes { source: string }.");
-    return inertChannel(() => {
-      closed = true;
-    });
+    return terminalChannel();
   }
 
   session = createAddSession(
@@ -79,9 +114,9 @@ export function openAddChannel(
     },
     send,
   );
-  session.start();
-
   const active = session;
+  active.start();
+
   return {
     receive(data) {
       if (closed) return;
@@ -96,18 +131,10 @@ export function openAddChannel(
       }
       active.install(frame.sourcePaths);
     },
+    closed: closedSignal,
     async close() {
       closed = true;
-      await active.dispose();
-    },
-  };
-}
-
-function inertChannel(close: () => void): AddPeerChannel {
-  return {
-    receive() {},
-    async close() {
-      close();
+      await shutdown();
     },
   };
 }

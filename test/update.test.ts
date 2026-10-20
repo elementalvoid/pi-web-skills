@@ -356,6 +356,68 @@ test("a local edit survives when the remote folder is unchanged and is overwritt
   });
 });
 
+test("a lock entry without its install directory is skipped and never reinstalled", async () => {
+  await withHarness(async (harness) => {
+    const repo = await createRepo(harness.root, [{ name: "alpha", folder: "alpha", body: "remote body" }]);
+    const locked = entry({
+      sourceUrl: repo.url,
+      ref: repo.branch,
+      skillPath: "skills/alpha/SKILL.md",
+      skillFolderHash: "0".repeat(40),
+    });
+    await writeLock(harness.paths, { alpha: locked });
+    const calls: ExecFileRequest[] = [];
+
+    const frames = await runUpdate({
+      paths: harness.paths,
+      tempRoot: harness.tempRoot,
+      exec: makeExec({ calls }),
+    });
+
+    const done = doneFrame(frames);
+    assert.deepEqual(done.skipped, [{ name: "alpha", reason: "Install directory is missing" }]);
+    assert.deepEqual(done.updated, []);
+    assert.deepEqual(done.unchanged, []);
+    assert.deepEqual(done.failed, []);
+    assert.equal(await exists(join(harness.paths.managedDirectory, "alpha", "SKILL.md")), false);
+    assert.deepEqual((await readLock(harness.paths)).skills.alpha, locked, "the entry is untouched");
+    assert.equal(calls.length, 0, "a broken entry is never fetched or cloned");
+  });
+});
+
+test("a lock entry with an ext:: transport is rejected before any clone", async () => {
+  await withHarness(async (harness) => {
+    const locked = entry({
+      source: "ext::sh",
+      sourceUrl: "ext::sh -c 'touch /tmp/pi-web-skills-pwned'",
+      ref: "main",
+      skillPath: "SKILL.md",
+      skillFolderHash: "a".repeat(40),
+    });
+    await writeLock(harness.paths, { evil: locked });
+    await installFixture(harness.paths, "evil", "evil install");
+    const calls: ExecFileRequest[] = [];
+
+    const frames = await runUpdate({
+      paths: harness.paths,
+      tempRoot: harness.tempRoot,
+      exec: makeExec({ calls }),
+    });
+
+    const done = doneFrame(frames);
+    assert.deepEqual(done.failed.map((failure) => failure.name), ["evil"]);
+    assert.match(done.failed[0]?.message ?? "", /ext::/);
+    assert.deepEqual(done.updated, []);
+    assert.deepEqual(done.unchanged, []);
+    assert.ok(
+      !calls.some((call) => call.file === "git"),
+      "an ext:: transport never reaches a git process",
+    );
+    assert.match(await readSkill(harness.paths, "evil"), /evil install/);
+    assert.deepEqual((await readLock(harness.paths)).skills.evil, locked);
+  });
+});
+
 test("every uncheckable entry is skipped with the exact upstream reason", async () => {
   await withHarness(async (harness) => {
     await writeLock(harness.paths, {
@@ -615,6 +677,22 @@ test("a cancel after one completed skill reports partial results and stops", asy
     const beta = (await readLock(harness.paths)).skills.beta;
     assert.equal(beta.updatedAt, "2026-01-02T00:00:00.000Z");
     assert.equal(beta.skillFolderHash, "3".repeat(40));
+  });
+});
+
+test("an explicit empty names list means every managed entry", async () => {
+  await withHarness(async (harness) => {
+    await writeLock(harness.paths, {
+      alpha: entry({ sourceType: "local" }),
+      beta: entry({ sourceType: "git" }),
+    });
+
+    const frames = await runUpdate({ paths: harness.paths, tempRoot: harness.tempRoot, names: [] });
+
+    assert.deepEqual(doneFrame(frames).skipped, [
+      { name: "alpha", reason: "Local path" },
+      { name: "beta", reason: "Git URL" },
+    ]);
   });
 });
 

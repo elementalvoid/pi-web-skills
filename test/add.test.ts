@@ -282,7 +282,15 @@ test("an existing target matches by its sanitised directory name", async () => {
     ]);
     // Written by an older tool: the folder name only matches after sanitising.
     await mkdir(join(harness.paths.managedDirectory, "CE Review"), { recursive: true });
+    await writeFile(
+      join(harness.paths.managedDirectory, "CE Review", "SKILL.md"),
+      "---\nname: ce-review\ndescription: existing\n---\n",
+    );
     await mkdir(join(harness.paths.managedDirectory, "notes"), { recursive: true });
+    await writeFile(
+      join(harness.paths.managedDirectory, "notes", "SKILL.md"),
+      "---\nname: notes\ndescription: existing\n---\n",
+    );
     await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
     await writeFile(
       harness.paths.lockfilePath,
@@ -301,6 +309,34 @@ test("an existing target matches by its sanitised directory name", async () => {
         ["ce-review", "unmanaged"],
         ["gamma", "none"],
         ["notes", "managed"],
+      ],
+    );
+
+    await session.dispose();
+  });
+});
+
+test("a nested unmanaged skill matches the target the panel reports", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+      { name: "gamma", description: "Gamma skill", folder: "gamma" },
+    ]);
+    const nested = join(harness.paths.managedDirectory, "nested", "alpha");
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, "SKILL.md"), "---\nname: alpha\ndescription: nested\n---\n");
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+
+    await session.settled;
+
+    const page = frames[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    assert.deepEqual(
+      page.candidates.map((candidate) => [candidate.name, candidate.existing]),
+      [
+        ["alpha", "unmanaged"],
+        ["gamma", "none"],
       ],
     );
 
@@ -379,7 +415,15 @@ test("candidates report the existing target state as none, managed, or unmanaged
       { name: "gamma", description: "Gamma skill", folder: "gamma" },
     ]);
     await mkdir(join(harness.paths.managedDirectory, "alpha"), { recursive: true });
+    await writeFile(
+      join(harness.paths.managedDirectory, "alpha", "SKILL.md"),
+      "---\nname: alpha\ndescription: existing\n---\n",
+    );
     await mkdir(join(harness.paths.managedDirectory, "beta"), { recursive: true });
+    await writeFile(
+      join(harness.paths.managedDirectory, "beta", "SKILL.md"),
+      "---\nname: beta\ndescription: existing\n---\n",
+    );
     await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
     await writeFile(
       harness.paths.lockfilePath,
@@ -808,6 +852,29 @@ async function waitForDone(frames: readonly AddFrame[], timeoutMs = 5000): Promi
 async function readJson(path: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
 }
+
+test("the injected clock stamps a new install's times", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const now = new Date("2026-03-04T05:06:07.000Z");
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec, started.signal, { now: () => now });
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["alpha"]);
+    const lock = await readJson(harness.paths.lockfilePath);
+    const lockEntry = (lock["skills"] as Record<string, Record<string, unknown>>)["alpha"];
+    assert.equal(lockEntry?.["installedAt"], now.toISOString());
+    assert.equal(lockEntry?.["updatedAt"], now.toISOString());
+
+    await session.dispose();
+  });
+});
 
 test("installing a skill copies its folder and writes one standard lock entry", async () => {
   await withHarness(async (harness) => {

@@ -20,11 +20,6 @@ export type SkillMatch = {
   readonly folderName: string | null;
 };
 
-/**
- * Resolve a name the way the panel does: exact lock key, sanitised lock key, then
- * sanitised folder name. Lock keys win, so a managed key is never reported as an
- * unmanaged folder.
- */
 /** Where an install of this name would land, and what is already there. */
 export type InstallTarget = {
   readonly key: string;
@@ -51,6 +46,11 @@ export function resolveInstallTarget(name: string, input: MatchInput): InstallTa
   };
 }
 
+/**
+ * Resolve a name the way the panel does: exact lock key, sanitised lock key, then
+ * sanitised folder name. Lock keys win, so a managed key is never reported as an
+ * unmanaged folder.
+ */
 export function matchSkillName(requested: string, input: MatchInput): SkillMatch | null {
   const wanted = sanitizeName(requested);
   const lockKey = findName(requested, input.lockKeys, wanted);

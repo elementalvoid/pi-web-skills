@@ -32,6 +32,21 @@ test("an unknown operation returns a structured error instead of throwing", asyn
   });
 });
 
+test("an aborted request returns a structured cancelled response instead of rejecting", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  const response = await handlePeerRequest(
+    { operation: "list", input: null, signal: controller.signal },
+    { home: "/tmp/pi-web-skills-home" },
+  );
+
+  assert.deepEqual(response, {
+    ok: false,
+    error: { code: "cancelled", message: "The request was cancelled." },
+  });
+});
+
 test("a malformed status input returns a structured error instead of throwing", async () => {
   const response = await handlePeerRequest(
     { operation: "status", input: { unexpected: true }, signal },

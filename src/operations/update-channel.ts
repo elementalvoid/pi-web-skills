@@ -103,7 +103,7 @@ export function openUpdateChannel(
   };
 }
 
-/** Validate an update input; `undefined` names means every managed entry. */
+/** Validate an update input; `undefined` or an empty list means every managed entry. */
 function readUpdateNames(input: JsonValue): readonly string[] | undefined | null {
   if (!isRecord(input)) return null;
   const keys = Object.keys(input);

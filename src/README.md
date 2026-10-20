@@ -43,7 +43,10 @@ outside `test/` so `npm test` stays browser-free.
 - No `skills` CLI execution at runtime.
 - No custom lock fields, sidecars, or metadata.
 - All lock writes go through the standard global lock shape.
-- Never write outside `~/.agents/skills` and `~/.agents/.skill-lock.json`.
+- Writes are limited to the managed directory (`<home>/.agents/skills`), the
+  resolved global lock (`$XDG_STATE_HOME/skills/.skill-lock.json` when set,
+  otherwise `<home>/.agents/.skill-lock.json`), and validated OS-temp clones.
+  No other agent directory is written.
 - No telemetry.
 - Browser code uses the host-provided `html` template tag; it does not import Lit.
 - Browser code imports only other modules under `browser/`. The host serves

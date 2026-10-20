@@ -256,17 +256,62 @@ test("an unknown frame type returns invalid-input instead of throwing", async ()
     const channel = harness.open({ source: "file:///tmp/pi-web-skills-repo" });
 
     assert.doesNotThrow(() => channel.receive({ type: "install" }, new AbortController().signal));
+    const first = harness.frames.length;
     assert.doesNotThrow(() => channel.receive({ type: "explode" }, new AbortController().signal));
 
-    const codes = harness.frames.map((frame) =>
-      typeof frame === "object" && frame !== null && !Array.isArray(frame)
-        ? (frame as { error?: { code?: string } }).error?.code
-        : undefined,
+    assert.equal(first, 1, "the malformed install frame produced one error");
+    assert.equal(harness.frames.length, 1, "a terminal error closes the channel");
+    assert.deepEqual(
+      harness.frames.map((frame) =>
+        typeof frame === "object" && frame !== null && !Array.isArray(frame)
+          ? (frame as { error?: { code?: string } }).error?.code
+          : undefined,
+      ),
+      ["invalid-input"],
     );
-    assert.deepEqual(codes, ["invalid-input", "invalid-input"]);
 
     await channel.close();
   });
+});
+
+test("a completed install closes the channel and removes its clone", async () => {
+  const repository = await mkdtemp(join(tmpdir(), "pi-web-skills-channel-repo-"));
+  try {
+    const source = await createSourceRepo(repository);
+    await withChannel(
+      async (harness) => {
+        const channel = harness.open({ source });
+        await waitFor(async () =>
+          harness.frames.some(
+            (frame) => (frame as { type?: string }).type === "candidates-end",
+          ),
+        );
+
+        channel.receive(
+          { type: "install", sourcePaths: ["skills/alpha/SKILL.md"] },
+          new AbortController().signal,
+        );
+        await waitFor(async () =>
+          harness.frames.some((frame) => (frame as { type?: string }).type === "done"),
+        );
+
+        await channel.closed;
+        assert.equal(
+          (harness.frames.at(-1) as { type?: string }).type,
+          "done",
+          "the done frame is sent before the channel closes",
+        );
+        assert.deepEqual(
+          (await readdir(harness.tempRoot)).filter((name) => name.startsWith("pi-web-skills-add-")),
+          [],
+          "the clone is removed on close",
+        );
+      },
+      realExec,
+    );
+  } finally {
+    await rm(repository, { recursive: true, force: true });
+  }
 });
 
 test("a cancel frame aborts the clone and removes its temporary directory", async () => {

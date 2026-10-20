@@ -10,7 +10,7 @@ The panel is machine-wide, but PI WEB is workspace-hosted. A user can easily mis
 
 ## Solution
 
-A PI WEB plugin with a server entry in the session daemon and a machine-scoped browser panel. The panel lists present skills classified as managed, unmanaged, or broken; adds skills from a source with an explicit selection and overwrite confirmation; updates managed installs by comparing the remote folder hash at the locked ref; removes managed installs and broken entries; and searches skills.sh. It writes only `~/.agents/skills` and the standard global lock, follows upstream skills.sh semantics, never executes the `skills` CLI at runtime, and tells the user when a `/reload` is needed.
+A PI WEB plugin with a server entry in the session daemon and a machine-scoped browser panel. The panel lists present skills classified as managed, unmanaged, or broken; adds skills from a source with an explicit selection and overwrite confirmation; updates managed installs by comparing the remote folder hash at the locked ref; removes managed installs and broken entries; and searches skills.sh. It writes only the managed directory, the standard global lock, and OS-temp clones it cleans up, follows upstream skills.sh semantics, never executes the `skills` CLI at runtime, and tells the user when a `/reload` is needed.
 
 Unmanaged skills are read-only for Update and Remove. Add may replace an existing directory, including an unmanaged one, only after an explicit overwrite confirmation in the panel. Update is explicit and confirmed. Every operation is safe to retry; a disconnected long operation cancels, Update leaves the install it was replacing intact, and Add reports only completed installs.
 
@@ -115,8 +115,8 @@ Requests:
 
 Channels:
 
-- `add` → client opens with `{ source: string }`. The server resolves and streams candidates in bounded pages (about 25 per frame) ending with a `candidates-end` frame, so one frame never approaches the host's 64 KiB channel limit. The client sends `{ type: "install", names: string[] }`. The server sends `{ type: "progress", phase, name, index, total }` per skill, then `{ type: "done", installed, replaced, failed }`. The client may send `{ type: "cancel" }` at any point.
-- `update` → client opens with `{ names?: string[] }` (omitted means every managed entry). The server sends `{ type: "progress", name, state, reason? }` with state `checking | updating | unchanged | skipped | deleted | failed`, then `{ type: "done", updated, unchanged, skipped, deleted, failed }`. The client may send `{ type: "cancel" }`.
+- `add` → client opens with `{ source: string }`. The server resolves and streams candidates in bounded pages (about 25 per frame) ending with a `candidates-end` frame, so one frame never approaches the host's 64 KiB channel limit. The client sends `{ type: "install", sourcePaths: string[] }`. The server sends `{ type: "progress", phase, name, index, total }` per skill, then `{ type: "done", installed, replaced, failed }`. The client may send `{ type: "cancel" }` at any point. A terminal `done` or `error` frame completes the channel; the server removes the temp clone before the host closes it.
+- `update` → client opens with `{ names?: string[] }`; omitted names and an explicit empty list both mean every managed entry. The server sends `{ type: "progress", name, state, reason? }` with state `checking | updating | unchanged | skipped | deleted | failed`, then `{ type: "done", updated, unchanged, skipped, deleted, failed }`. The client may send `{ type: "cancel" }`.
 - Every frame and every request input is validated against a small typed schema. Unknown operations, unknown frame types, and malformed payloads produce a structured error rather than a crash.
 - A channel frame is JSON only and bounded to the host's 64 KiB frame size. Results are summaries; descriptions are capped and sanitised; long lists are paged.
 - The host bounds each channel open and receive callback to about 10 s. Those handlers return immediately; clone, install, and update work runs asynchronously on the channel lifetime signal and streams progress. No long operation is awaited inside an open or receive callback.
@@ -144,7 +144,7 @@ Channels:
 ### Lockfile
 
 - Read and write the upstream version 3 global lock shape. A missing lockfile is an empty lock, not an error. A malformed lock is `lock-unreadable` and blocks mutations; the panel can still show present skills with a warning.
-- Preserve unknown top-level fields and unknown per-entry fields. Preserve `dismissed` and `lastSelectedAgents` verbatim. Never write a lower schema version. When writing, set `version: 3` and keep every entry not being changed.
+- Preserve unknown top-level fields and unknown per-entry fields. Preserve `dismissed` and `lastSelectedAgents` verbatim. Write `version: 3`, but never lower an existing higher version: the written version is `Math.max(3, existing)`. Keep every entry not being changed.
 - An entry carries exactly the upstream fields: `source`, `sourceType`, `sourceUrl`, optional `ref`, `skillPath`, `skillFolderHash`, `installedAt`, `updatedAt`, and optional `pluginName`. No custom fields, no sidecar files, no metadata extensions.
 - Add preserves `installedAt` when replacing an existing entry and sets `updatedAt` now. Update preserves `installedAt`, sets `updatedAt` only when the install changed, and updates `skillPath` when the skill moved. Remove deletes only the named key.
 - All mutations re-read the lock immediately before writing and use an atomic rename. Lock mutations are serialized in-process per lockfile so two operations cannot lose each other's updates. A failed copy does not write an entry for that skill.
@@ -152,18 +152,18 @@ Channels:
 ### Add
 
 - Accepted source types: GitHub shorthand (`owner/repo`), GitHub or GitLab HTTPS URLs (including tree URLs with a subpath), generic git URLs (including `file://` for tests), with an optional `#ref` and `@skill` fragment. Rejected with `unsupported-source`: local paths, well-known skill URLs, hosted archive or raw-file URLs, and malformed input.
-- Resolution parses the source, clones it to a temp directory at the requested ref (shallow when possible; fetch the commit when the ref is a full SHA and `--branch` cannot target it), and discovers every directory containing `SKILL.md`. Each candidate carries name, description, source path, sanitised install folder name, computed folder hash, and the existing target state (`none`, `managed`, or `unmanaged`).
+- Resolution parses the source, clones it to a temp directory at the requested ref (shallow when possible; fetch the commit when the ref is a full SHA and `--branch` cannot target it), and discovers every directory containing `SKILL.md`. Each candidate carries name, description, source path, sanitised install folder name, computed folder hash, and the existing target state (`none`, `managed`, or `unmanaged`). Existing-target detection uses the same recursive present-skill discovery as List, so a nested present skill matches its destination.
 - Folder hash for GitHub and GitLab sources is the git tree object SHA of the skill folder (`git rev-parse HEAD:<folder>`), or the repository tree SHA for a root-level skill. Folder hash for generic git sources is the vendored SHA-256 content hash. GitHub tree hashing must never silently fall back to a different hash shape, because Update uses a 40-hex hash as its "checkable" signal.
 - Install copies each selected skill directory into `<managedDirectory>/<sanitised name>`. Copying includes regular files and directories with their file modes, skips symlinks, `.git`, and `node_modules`, and rejects any path that resolves outside the source skill directory. The destination is staged as a temp sibling and swapped in; an existing directory is replaced, never merged. A root-level skill copies the repository root with the same exclusions.
-- Replacing an unmanaged directory is allowed only after the user confirms the overwrite in the panel. The server reports `replaced` names so the UI can prove what happened.
+- Replacing an existing directory is a panel decision: the panel asks for overwrite confirmation before it sends an install that targets an existing folder, including an unmanaged one. The server never prompts; after the fact it reports `replaced` names so the UI can prove what happened.
 - Duplicate sanitised names within one selection fail before any copy or lock write.
-- The channel owns the temp clone until installation finishes or the channel closes. All exit paths clean it up.
+- The channel owns the temp clone until installation finishes or the channel closes. All exit paths clean it up; a terminal `done` or `error` frame completes the channel and removes the clone before the host closes it.
 - One lock entry is written per successfully installed skill. The entry's `source` is the normalized `owner/repo` for GitHub and GitLab sources and the clone URL for generic git; `sourceUrl` is the clone URL; `sourceType` is the parsed type. A later failure leaves earlier successes installed and recorded; the result lists failures with messages.
 
 ### Update
 
-- Checkable entries are exactly those with `sourceType: "github"`, a non-empty `skillPath`, and a non-empty `skillFolderHash`. Everything else is skipped with the upstream reason strings: `Local path`, `Git URL`, `Well-known skill`, `Private or deleted repo`, `No skill path recorded`, `No version tracking`.
-- Entries are grouped by source and ref. For each group, fetch the GitHub tree at the locked ref through the GitHub API using the token resolver and, when needed, `gh api` through the bounded `execFile` adapter. Use the vendored tree parser/hash helper, but not any vendored function that spawns its own process. If the API is unavailable, clone at the ref and compute hashes from the checkout.
+- Checkable entries are exactly those with `sourceType: "github"`, a non-empty `skillPath`, and a non-empty `skillFolderHash`. Everything else is skipped with the upstream reason strings: `Local path`, `Git URL`, `Well-known skill`, `Private or deleted repo`, `No skill path recorded`, `No version tracking`. A checkable entry whose install directory is missing is also skipped, with `Install directory is missing`, and is never reinstalled.
+- Entries are grouped by source and ref. A URL taken from lock state that carries an `ext::` transport is rejected before any clone. For each group, fetch the GitHub tree at the locked ref through the GitHub API using the token resolver and, when needed, `gh api` through the bounded `execFile` adapter. Use the vendored tree parser/hash helper, but not any vendored function that spawns its own process. If the API is unavailable, clone at the ref and compute hashes from the checkout.
 - Compare each entry's `skillFolderHash` with the remote folder hash. Match by skill name across the current source before declaring anything deleted: a name found at a different path is relocated, not deleted. A name absent from the current source marks the skill deleted upstream: report it, never delete its install or entry.
 - If the skill is found at a different path in the same source, mark it relocated: update `skillPath` as part of the update.
 - Apply only changed and relocated skills. Clone the group at the ref when content is needed, then replace each install through the same safe copier and atomic swap used by Add. Preserve `installedAt`; set `updatedAt` now for each replaced skill.
@@ -174,7 +174,7 @@ Channels:
 
 - Remove resolves each requested name to a managed or broken identity using the same matching rules as List, preferring lock keys.
 - A managed install removes its directory recursively, then its lock entry. A broken entry removes only the entry. An unmanaged directory is `not-managed` and is never touched. An unknown name is `not-found`.
-- Every removal path must resolve inside the managed directory after symlink resolution. A symlinked skill directory is refused with `unsafe-path` rather than followed.
+- Every removal path must resolve inside the managed directory after symlink resolution. A symlinked *present* skill is refused with `unsafe-path` rather than followed. A *broken* entry whose folder name is a symlink is cleaned up by deleting only the lock entry; removal never follows the link and never deletes the link or its target.
 - The lock write preserves unknown fields. If the directory is already missing, removing the entry still succeeds; the result says the directory was absent.
 
 ### Search
@@ -187,7 +187,7 @@ Channels:
 
 - No shell anywhere. Git, `gh`, and any other process run through the host `execFile` with argv arrays, a working directory, a timeout, and output bounds. Set `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0`; reject `ext::` transports.
 - Clone timeout is requested at 120 s, subject to the host's lower maximum; GitHub API calls use 10 s and search uses 8 s. A timeout is a structured error with a retry hint.
-- All user-supplied names are sanitised before use as a path. Containment checks run before any copy, delete, or rename. Never write outside the managed directory and the lockfile path.
+- All user-supplied names are sanitised before use as a path. Containment checks run before any copy, delete, or rename. Never write outside the managed directory, the resolved lockfile path, and validated OS-temp clone paths.
 - Temp clones use a unique OS temp prefix. Cleanup validates that the path is inside the OS temp directory before removing it.
 - No telemetry, analytics, session messaging, or automatic `/reload`. No writes to another agent's directory, no Claude/Cursor/OpenCode copies.
 

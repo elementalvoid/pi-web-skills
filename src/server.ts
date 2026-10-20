@@ -42,6 +42,26 @@ export async function handlePeerRequest(
   environment: Environment,
   dependencies: PeerDependencies = {},
 ): Promise<PeerResponse> {
+  try {
+    return await routePeerRequest(request, environment, dependencies);
+  } catch (error) {
+    // A disconnecting client or a surprising failure still gets one JSON answer,
+    // so the host never sees an unhandled rejection.
+    if (request.signal.aborted || isAbortError(error)) {
+      return failure("cancelled", "The request was cancelled.");
+    }
+    return failure(
+      "internal-error",
+      `The ${request.operation} request failed: ${describe(error)}`,
+    );
+  }
+}
+
+async function routePeerRequest(
+  request: PeerRequest,
+  environment: Environment,
+  dependencies: PeerDependencies,
+): Promise<PeerResponse> {
   if (request.operation === "list") {
     if (request.input !== null) {
       return failure("invalid-input", "list takes no input");
@@ -138,6 +158,14 @@ function daemonEnvironment(): Environment {
 
 function failure(code: string, message: string): PeerResponse {
   return { ok: false, error: { code, message } };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 const hostFetch: FetchLike = async (url, init) => {

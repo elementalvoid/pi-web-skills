@@ -25,6 +25,7 @@ const SKIP_REASONS = {
   privateOrDeleted: "Private or deleted repo",
   noPath: "No skill path recorded",
   untracked: "No version tracking",
+  missingInstall: "Install directory is missing",
 } as const;
 
 export type UpdateSkip = { readonly name: string; readonly reason: string };
@@ -49,7 +50,7 @@ export type UpdateFrame =
   | { readonly type: "error"; readonly error: OperationError };
 
 export type UpdateContext = OperationContext & {
-  /** Omitted means every entry the lock records. */
+  /** Omitted or empty means every entry the lock records. */
   readonly names?: readonly string[] | undefined;
   readonly exec: ExecFile;
   readonly tempRoot: string;
@@ -208,10 +209,23 @@ async function runUpdate(
   }
   if (checkable.length === 0 || signal.aborted) return;
 
+  // Update only replaces an install that is still there. A lock entry with no
+  // present directory is broken: report it and never reinstall it.
   const folderNames = (await discoverSkillDirectories(context.paths.managedDirectory)).map(
     (directory) => directory.folderName,
   );
-  for (const group of groupBySource(checkable)) {
+  const installed: Checkable[] = [];
+  for (const item of checkable) {
+    if (matchSkillName(item.name, { lockKeys: [], folderNames })?.folderName != null) {
+      installed.push(item);
+      continue;
+    }
+    summary.skipped.push({ name: item.name, reason: SKIP_REASONS.missingInstall });
+    emit({ type: "progress", name: item.name, state: "skipped", reason: SKIP_REASONS.missingInstall });
+  }
+  if (installed.length === 0 || signal.aborted) return;
+
+  for (const group of groupBySource(installed)) {
     // Cancel stops after the current skill; no new group starts.
     if (signal.aborted) return;
     await updateGroup(context, group, folderNames, signal, emit, summary);
@@ -390,9 +404,14 @@ async function ensureClone(
   if (state.error !== null) {
     return { ok: false, error: operationError("clone-failed", state.error) };
   }
+  const url = entry.sourceUrl.trim() === "" ? entry.source : entry.sourceUrl;
+  if (url.toLowerCase().includes("ext::")) {
+    state.error = "The lock entry uses an ext:: git transport, which is not allowed.";
+    return { ok: false, error: operationError("unsupported-source", state.error) };
+  }
   const parsed: ParsedSource = {
     type: "github",
-    url: entry.sourceUrl.trim() === "" ? entry.source : entry.sourceUrl,
+    url,
     ...(entry.ref === undefined ? {} : { ref: entry.ref }),
   };
   const cloned = await cloneSource(context.exec, parsed, context.tempRoot, signal);
