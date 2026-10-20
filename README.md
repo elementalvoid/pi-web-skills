@@ -20,6 +20,10 @@ It shows a machine-wide notice, the resolved managed directory
 managed directory is `/data/home/.agents/skills` and the lock is
 `/data/home/.agents/.skill-lock.json`.
 
+<p align="center">
+  <img src="docs/skills-panel.png" alt="The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions" width="900">
+</p>
+
 Five operations:
 
 - **List** every present skill as **managed**, **unmanaged**, or **broken**, with

@@ -70,6 +70,18 @@ try {
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   const page = await context.newPage();
+  // The documentation shot uses the bundled dark theme. The test itself does
+  // not depend on the theme; this only pins it so README images are stable.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem(
+        "pi-web-app-theme",
+        JSON.stringify({ themeId: "themes:pi-web-dark", auto: false }),
+      );
+    } catch {
+      // about:blank and opaque origins may reject storage; the test still runs.
+    }
+  });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
@@ -102,7 +114,13 @@ try {
   await page.getByRole("heading", { name: "Broken entries (1)", exact: true }).waitFor();
   await page.getByText("Invalid frontmatter: description is missing", { exact: false }).waitFor();
   if (process.env.E2E_SCREENSHOT !== undefined) {
-    await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: true });
+    // A taller documentation shot: show the panel controls plus one expanded
+    // skill row with its metadata and actions. The screenshot is opt-in so the
+    // normal smoke test never writes into the package.
+    await page.setViewportSize({ width: 1400, height: 1400 });
+    const firstRow = page.locator(".skills-panel .skills-row").first();
+    await firstRow.locator(".skills-row-title").click();
+    await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: false });
   }
   const unmanaged = page.getByRole("heading", { name: /^Unmanaged skills/ }).locator("..");
   assert.equal(
