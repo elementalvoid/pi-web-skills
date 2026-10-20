@@ -25,6 +25,32 @@ export type SkillMatch = {
  * sanitised folder name. Lock keys win, so a managed key is never reported as an
  * unmanaged folder.
  */
+/** Where an install of this name would land, and what is already there. */
+export type InstallTarget = {
+  readonly key: string;
+  readonly folderName: string;
+  readonly existing: "none" | "managed" | "unmanaged";
+};
+
+/**
+ * The one destination rule for the existing-target badge and the installer, so
+ * the badge never promises a different folder than the install writes.
+ */
+export function resolveInstallTarget(name: string, input: MatchInput): InstallTarget {
+  const match = matchSkillName(name, input);
+  const existing =
+    match?.lockKey != null && match.folderName != null
+      ? "managed"
+      : match?.folderName != null
+        ? "unmanaged"
+        : "none";
+  return {
+    key: match?.lockKey ?? name,
+    folderName: match?.folderName ?? sanitizeName(name),
+    existing,
+  };
+}
+
 export function matchSkillName(requested: string, input: MatchInput): SkillMatch | null {
   const wanted = sanitizeName(requested);
   const lockKey = findName(requested, input.lockKeys, wanted);

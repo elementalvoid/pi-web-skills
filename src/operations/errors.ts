@@ -18,8 +18,8 @@ export type OperationErrorCode =
   | "auth-required"
   | "folder-hash-failed"
   | "discovery-failed"
-  | "skill-not-found"
-  | "not-implemented";
+  | "install-failed"
+  | "skill-not-found";
 
 export type OperationError = {
   readonly code: OperationErrorCode;

@@ -4,6 +4,7 @@ import type {
   PluginPeerChannel,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
+import { refreshSkillList } from "./list.ts";
 
 type Template = ReturnType<HtmlTemplateTag>;
 
@@ -12,10 +13,10 @@ type CandidateView = {
   readonly description: string;
   readonly sourcePath: string;
   readonly folderName: string;
-  readonly existing: "none" | "managed" | "unmanaged";
+  existing: "none" | "managed" | "unmanaged";
 };
 
-type AddPhase = "idle" | "resolving" | "candidates" | "installing" | "error";
+type AddPhase = "idle" | "resolving" | "candidates" | "confirming" | "installing" | "error";
 
 type AddState = {
   source: string;
@@ -25,12 +26,10 @@ type AddState = {
   selected: Set<string>;
   channel: PluginPeerChannel | null;
   pending: AbortController | null;
+  reloadReminder: boolean;
 };
 
 const EXISTING = ["none", "managed", "unmanaged"] as const;
-
-/** Ticket 05 owns install; until then the action is visible but not actionable. */
-const INSTALL_AVAILABLE = false;
 
 /**
  * The Add source and selection panel. State is per hosted panel; the channel is
@@ -51,6 +50,7 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
         selected: new Set(),
         channel: null,
         pending: null,
+        reloadReminder: false,
       };
       states.set(key, state);
     }
@@ -60,7 +60,8 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
   return (context: WorkspacePanelContext): Template => {
     const state = stateFor(context);
     const render = () => context.host.requestRender();
-    const busy = state.phase === "resolving" || state.phase === "installing";
+    const busy =
+      state.phase === "resolving" || state.phase === "confirming" || state.phase === "installing";
     // A cancel must reach an open that has not resolved yet, not only a live channel.
     const cancellable = state.pending !== null || (state.channel !== null && state.phase !== "idle");
 
@@ -92,6 +93,33 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
           state.candidates.length === 0
             ? "The source provides no skills."
             : `${String(state.candidates.length)} skill${state.candidates.length === 1 ? "" : "s"} found. Select what to install.`;
+        render();
+        return;
+      }
+      if (frame.type === "progress") {
+        state.phase = "installing";
+        state.message = `Installing ${String(frame.index + 1)} of ${String(frame.total)}: ${frame.name}…`;
+        render();
+        return;
+      }
+      if (frame.type === "done") {
+        state.phase = "candidates";
+        const parts: string[] = [];
+        if (frame.installed.length > 0) parts.push(`Installed: ${frame.installed.join(", ")}`);
+        if (frame.replaced.length > 0) parts.push(`Replaced: ${frame.replaced.join(", ")}`);
+        if (frame.failed.length > 0) {
+          parts.push(
+            `Failed: ${frame.failed.map((failure) => `${failure.name} (${failure.message})`).join(", ")}`,
+          );
+        }
+        state.message = `${parts.join(". ") || "No skills were installed"}.`;
+        const installed = frame.installed.length + frame.replaced.length > 0;
+        const installedNames = new Set([...frame.installed, ...frame.replaced]);
+        for (const candidate of state.candidates) {
+          if (installedNames.has(candidate.name)) candidate.existing = "managed";
+        }
+        state.reloadReminder = installed;
+        if (installed) refreshSkillList(context);
         render();
         return;
       }
@@ -174,21 +202,42 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
       render();
     };
 
-    const install = () => {
+    const selectedCandidates = () =>
+      state.candidates.filter((candidate) => state.selected.has(candidate.sourcePath));
+
+    const sendInstall = () => {
       const channel = state.channel;
       if (channel === null) return;
-      const names = state.candidates
-        .filter((candidate) => state.selected.has(candidate.sourcePath))
-        .map((candidate) => candidate.name);
-      if (names.length === 0) {
+      const selected = selectedCandidates();
+      if (selected.length === 0) {
         state.message = "Select at least one skill to install.";
         render();
         return;
       }
       state.phase = "installing";
-      state.message = `Starting install of ${String(names.length)} skill${names.length === 1 ? "" : "s"}…`;
-      channel.send({ type: "install", names });
+      state.message = `Starting install of ${String(selected.length)} skill${selected.length === 1 ? "" : "s"}…`;
+      channel.send({ type: "install", names: selected.map((candidate) => candidate.name) });
       render();
+    };
+
+    const install = () => {
+      const selected = selectedCandidates();
+      if (state.channel === null) return;
+      if (selected.length === 0) {
+        state.message = "Select at least one skill to install.";
+        render();
+        return;
+      }
+      if (selected.some((candidate) => candidate.existing !== "none")) {
+        state.phase = "confirming";
+        state.message = `Installing replaces the existing folders for: ${selected
+          .filter((candidate) => candidate.existing !== "none")
+          .map((candidate) => candidate.name)
+          .join(", ")}. Confirm to overwrite.`;
+        render();
+        return;
+      }
+      sendInstall();
     };
 
     const toggle = (sourcePath: string) => {
@@ -280,17 +329,29 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
                   )}
                 </ul>
               </fieldset>
-              <button
-                type="button"
-                ?disabled=${!INSTALL_AVAILABLE ||
-                busy ||
-                state.selected.size === 0 ||
-                state.channel === null}
-                @click=${install}
-              >
-                Install selected (${String(state.selected.size)})
-              </button>
-              <p>Install is not available yet. Selecting skills writes nothing.</p>
+              ${state.phase === "confirming"
+                ? html`<button type="button" @click=${sendInstall}>Overwrite and install</button>`
+                : html`<button
+                    type="button"
+                    ?disabled=${busy || state.selected.size === 0 || state.channel === null}
+                    @click=${install}
+                  >
+                    Install selected (${String(state.selected.size)})
+                  </button>`}
+              ${state.reloadReminder
+                ? html`<p role="status">
+                    Skills were installed. Run <code>/reload</code> so the agent picks them up.
+                    <button
+                      type="button"
+                      @click=${() => {
+                        state.reloadReminder = false;
+                        render();
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </p>`
+                : null}
             `}
       </section>
     `;
@@ -300,6 +361,19 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
 type ServerFrame =
   | { readonly type: "candidates"; readonly candidates: CandidateView[] }
   | { readonly type: "candidates-end"; readonly total: number }
+  | {
+      readonly type: "progress";
+      readonly phase: string;
+      readonly name: string;
+      readonly index: number;
+      readonly total: number;
+    }
+  | {
+      readonly type: "done";
+      readonly installed: string[];
+      readonly replaced: string[];
+      readonly failed: { readonly name: string; readonly message: string }[];
+    }
   | { readonly type: "error"; readonly message: string };
 
 function readFrame(data: JsonValue): ServerFrame | null {
@@ -321,12 +395,50 @@ function readFrame(data: JsonValue): ServerFrame | null {
       ? { type: "candidates-end", total: data["total"] }
       : null;
   }
+  if (type === "progress") {
+    const { phase, name, index, total } = data;
+    if (
+      typeof phase !== "string" ||
+      typeof name !== "string" ||
+      typeof index !== "number" ||
+      typeof total !== "number"
+    ) {
+      return null;
+    }
+    return { type: "progress", phase, name, index, total };
+  }
+  if (type === "done") {
+    const installed = readNames(data["installed"]);
+    const replaced = readNames(data["replaced"]);
+    const failed = readFailures(data["failed"]);
+    if (installed === null || replaced === null || failed === null) return null;
+    return { type: "done", installed, replaced, failed };
+  }
   if (type === "error") {
     const error = data["error"];
     if (error === undefined || !isRecord(error) || typeof error["message"] !== "string") return null;
     return { type: "error", message: error["message"] };
   }
   return null;
+}
+
+function readNames(value: JsonValue | undefined): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.every((name) => typeof name === "string") ? [...value] : null;
+}
+
+function readFailures(
+  value: JsonValue | undefined,
+): { readonly name: string; readonly message: string }[] | null {
+  if (!Array.isArray(value)) return null;
+  const failures: { readonly name: string; readonly message: string }[] = [];
+  for (const failure of value) {
+    if (!isRecord(failure)) return null;
+    const { name, message } = failure;
+    if (typeof name !== "string" || typeof message !== "string") return null;
+    failures.push({ name, message });
+  }
+  return failures;
 }
 
 function readCandidate(value: JsonValue): CandidateView | null {

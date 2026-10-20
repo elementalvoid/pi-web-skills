@@ -35,6 +35,12 @@ export function renderSkillList(
   return renderList(html, state);
 }
 
+/** Forget the cached list so the next render re-reads the machine after a mutation. */
+export function refreshSkillList(context: WorkspacePanelContext): void {
+  lists.delete(context.machine.id);
+  context.host.requestRender();
+}
+
 function renderList(html: HtmlTemplateTag, state: ListState): ReturnType<HtmlTemplateTag> {
   if (state.kind === "loading") {
     return html`<p aria-live="polite">Loading skills…</p>`;
