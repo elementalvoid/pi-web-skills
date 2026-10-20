@@ -6,23 +6,78 @@ A PI WEB panel for managing the agent skills that Pi loads from `~/.agents/skill
 server entry. Upstream skills.sh behavior is the contract; the panel never runs the
 `skills` CLI at runtime.
 
+## Install
+
+### Requirements
+
+- PI WEB with browser plugin API v4 and server plugin API v3. Tested against
+  `@jmfederico/pi-web` 1.202610.1.
+- Node.js 22.20 or newer to build the package.
+- `git`, plus a PI WEB session daemon running as the user whose skills you want to
+  manage.
+
+The package is not published to npm. Install it from a source checkout:
+
+```sh
+git clone https://github.com/elementalvoid/pi-web-skills.git
+cd pi-web-skills
+npm install
+npm run build
+```
+
+Register the built checkout with PI WEB in one of two ways.
+
+### A. Pi package (recommended for a stable install)
+
+- Open **Settings → Pi packages** and add the absolute path to this checkout.
+- Or from a shell:
+
+  ```sh
+  pi install "$PWD"
+  ```
+
+### B. Local plugin directory (fastest for development)
+
+```sh
+PLUGIN_DIR="${PI_WEB_DATA_DIR:-$HOME/.pi-web}/plugins"
+mkdir -p "$PLUGIN_DIR"
+ln -s "$PWD" "$PLUGIN_DIR/pi-web-skills"
+```
+
+The symlink name must match `^[a-z][a-z0-9.-]*$`; `pi-web-skills` qualifies. PI WEB
+reads local plugins from `$PI_WEB_DATA_DIR/plugins`, which defaults to
+`~/.pi-web/plugins`.
+
+Then:
+
+1. Restart the session daemon once so the server entry loads. On a native systemd
+   user install, that is `systemctl --user restart pi-web-sessiond`. For other
+   deployments, see [Restarting the session daemon](CONTRIBUTING.md#restarting-the-session-daemon).
+2. If **skills** is not enabled, turn it on under **Settings → PI WEB plugins**.
+3. Reload the browser page. Open a workspace and select the **Skills** tab, or run
+   **Open Skills** from the action palette.
+
+The panel manages the home directory of the user running the session daemon:
+`~/.agents/skills` and the global lock. If the daemon runs in a container, that is
+the container user's home; mount or persist it if installed skills should survive
+container replacement.
+
+For a development loop with local changes, see
+[docs/local-development.md](docs/local-development.md).
+
 ## What the panel does
 
-Open the **Skills** tab in any workspace, or run **Open Skills** from the action
-palette. The panel is hosted in a workspace but manages machine-wide state; it
-never reads or writes workspace files. PI WEB's public plugin API has no
-Settings-pane contribution, so a Settings tab would require a PI WEB core change.
+The panel is hosted in a workspace but manages machine-wide state; it never reads
+or writes workspace files. PI WEB's public plugin API has no Settings-pane
+contribution, so a Settings tab would require a PI WEB core change.
 
-It shows a machine-wide notice, the resolved managed directory
-(`<home>/.agents/skills`), and the resolved lockfile
-(`$XDG_STATE_HOME/skills/.skill-lock.json`, otherwise
-`<home>/.agents/.skill-lock.json`). In the TrueNAS image, `HOME=/data/home`, so the
-managed directory is `/data/home/.agents/skills` and the lock is
-`/data/home/.agents/.skill-lock.json`.
+It shows a machine-wide notice and the resolved managed directory and lockfile:
 
-<p align="center">
-  <img src="docs/skills-panel.png" alt="The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions" width="588">
-</p>
+- managed directory: the session-daemon user's `~/.agents/skills`;
+- lockfile: `$XDG_STATE_HOME/skills/.skill-lock.json` when `XDG_STATE_HOME` is set,
+  otherwise `~/.agents/.skill-lock.json`.
+
+![The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions](docs/skills-panel.png)
 
 Five operations:
 
@@ -83,13 +138,14 @@ A PI WEB plugin package with:
 - a **browser entry** contributing one machine-scoped workspace panel. The browser
   bundle uses the host-provided `html` template tag; it does not bundle Lit.
 
-The plugin has no settings in v1. Install and update the package through
-**Settings → Pi packages**, or load it from a local directory as described in
-[docs/local-development.md](docs/local-development.md).
+The plugin has no settings in v1. See [Install](#install) for setup.
 
-- A browser-bundle change needs a rebuild and a page reload.
-- A server-module or `package.json` metadata change needs a session-daemon restart.
-- Installed skills need `/reload` in each idle session.
+| Change | Action |
+| --- | --- |
+| Browser bundle / panel | Rebuild and reload the page |
+| Server module (`dist/server.js`) | Rebuild, restart the session daemon, reload the page |
+| `package.json` `piWeb` metadata | Restart the session daemon, reload the page |
+| Installed skills | `/reload` in each idle Pi session |
 
 ## Development
 
@@ -108,20 +164,26 @@ touch the real `~/.agents` state or the network.
 The real-browser smoke test is separate:
 
 ```sh
-PLAYWRIGHT_BROWSERS_PATH=/data/home/.cache/ms-playwright npm run test:e2e
+npm run test:e2e
 ```
 
-It builds the package, starts an isolated PI WEB instance (temporary `HOME`,
-`PI_CODING_AGENT_DIR`, `PI_WEB_DATA_DIR`, session socket, and free port), opens the
-panel in Chromium, and exercises list states, Add from a local `file://` git
-fixture, Remove, broken cleanup, and Update's confirmation. It never touches the
-hosting daemon or `/data/pi-web`. See
-[docs/local-development.md](docs/local-development.md) for prerequisites and the
-manual checklist.
+Install Chromium first if Playwright does not have it cached
+(`npx playwright install chromium`). The command builds the package, starts an
+isolated PI WEB instance (temporary `HOME`, `PI_CODING_AGENT_DIR`,
+`PI_WEB_DATA_DIR`, session socket, and free port), opens the panel in Chromium,
+and exercises list states, Add from a local `file://` git fixture, Remove, broken
+cleanup, and Update's confirmation. It never touches a running PI WEB instance or
+its data directory. See [docs/local-development.md](docs/local-development.md) for
+prerequisites and the manual checklist.
 
 Upstream source is pinned as a vendored subset; see
 [docs/upstream-parity.md](docs/upstream-parity.md). `skills@1.7.4` is a dev
 dependency used only for parity fixtures.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the session-daemon
+restart guide for native and container installs, and the manual UI checklist.
 
 ## Decisions
 

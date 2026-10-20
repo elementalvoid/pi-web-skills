@@ -12,8 +12,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
-const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH ?? "/data/home/.cache/ms-playwright";
-process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
+// Playwright resolves Chromium from PLAYWRIGHT_BROWSERS_PATH when set, otherwise
+// from the user cache (~/.cache/ms-playwright). Install it with
+// `npx playwright install chromium` if the smoke test cannot find it.
 const { chromium } = await import("playwright");
 
 const children = [];
