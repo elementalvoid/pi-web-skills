@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { JsonValue } from "@jmfederico/pi-web/server-plugin-api";
 import { handlePeerRequest } from "../src/server.ts";
 
 const signal = new AbortController().signal;
@@ -90,4 +91,54 @@ test("a status request returns the resolved paths and existence flags", async ()
       },
     });
   });
+});
+
+test("the activated plugin opens an add channel that rejects malformed input", async () => {
+  const { default: plugin } = await import("../src/server.ts");
+  const frames: JsonValue[] = [];
+  const lifetime = new AbortController();
+  const activation = await plugin.activate({
+    apiVersion: 3,
+    pluginId: "skills",
+    packageRoot: "/tmp",
+    dataDirectory: "/tmp",
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    settings: {},
+    execFile: async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }),
+    signal: lifetime.signal,
+    lifetimeSignal: lifetime.signal,
+  });
+  const peer = activation.peer;
+  const openChannel = peer?.openChannel;
+  if (openChannel === undefined) throw new Error("the plugin exposes no channel");
+
+  const channel = await openChannel.call(peer, {
+    project: { id: "project", name: "Project", path: "/project" },
+    workspace: {
+      id: "workspace",
+      projectId: "project",
+      path: "/project",
+      label: "Project",
+      isMain: true,
+    },
+    operation: "add",
+    input: null,
+    signal: lifetime.signal,
+    send: (frame) => frames.push(frame),
+  });
+  await channel.close?.({ code: 1000, reason: "test", signal: lifetime.signal });
+
+  assert.deepEqual(frames, [
+    {
+      type: "error",
+      error: { code: "invalid-input", message: "add takes { source: string }." },
+    },
+  ]);
 });

@@ -4,6 +4,7 @@ import type {
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
 import type { StatusPayload } from "../operations/status.ts";
+import { createAddPanel } from "./add-panel.ts";
 import { renderSkillList } from "./list.ts";
 
 type StatusState =
@@ -19,6 +20,7 @@ const plugin = {
   apiVersion: 4,
   name: "Skills",
   activate: ({ html }) => {
+    const renderAdd = createAddPanel(html);
     const renderStatus = (status: StatusState) => {
       if (status.kind === "loading") {
         return html`<p aria-live="polite">Loading machine status…</p>`;
@@ -64,6 +66,7 @@ const plugin = {
                     Installed skills are available to every workspace on this machine.
                   </p>
                   ${renderStatus(status)}
+                  ${renderAdd(context)}
                   ${renderSkillList(html, context)}
                 </section>
               `;

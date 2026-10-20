@@ -1,9 +1,10 @@
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import type {
   JsonValue,
   PiWebServerPlugin,
   ServerPluginPeerRequestContext,
 } from "@jmfederico/pi-web/server-plugin-api";
+import { openAddChannel } from "./operations/add-channel.ts";
 import type { Environment } from "./operations/paths.ts";
 import { resolveSkillPaths } from "./operations/paths.ts";
 import type { ListPayload } from "./operations/list.ts";
@@ -49,7 +50,7 @@ export async function handlePeerRequest(
 const plugin: PiWebServerPlugin = {
   apiVersion: 3,
   name: "Skills",
-  activate({ pluginId, logger }) {
+  activate({ pluginId, logger, execFile }) {
     logger.info("Activating Skills plugin", { pluginId });
     return {
       peer: {
@@ -57,6 +58,20 @@ const plugin: PiWebServerPlugin = {
           handlePeerRequest(
             { operation: context.operation, input: context.input, signal: context.signal },
             daemonEnvironment(),
+          ),
+        openChannel: (context) =>
+          openAddChannel(
+            {
+              operation: context.operation,
+              input: context.input,
+              signal: context.signal,
+              send: context.send,
+            },
+            {
+              paths: resolveSkillPaths(daemonEnvironment()),
+              exec: execFile,
+              tempRoot: tmpdir(),
+            },
           ),
       },
     };
