@@ -2,10 +2,11 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseFrontmatter } from "../vendor/skills/frontmatter.ts";
+import { sanitizeMetadata } from "../vendor/skills/sanitize.ts";
 import type { OperationContext } from "./context.ts";
 import type { LockEntry } from "./lockfile.ts";
 import { readLockfile } from "./lockfile.ts";
-import { matchSkillName } from "./matching.ts";
+import { sanitizeName } from "./matching.ts";
 
 /** How a row relates to the lockfile: present with an entry, present without one, or an entry alone. */
 export type SkillState = "managed" | "unmanaged" | "broken";
@@ -36,8 +37,12 @@ export type ListPayload = {
   readonly lockWarning: string | null;
 };
 
+// Kept local instead of reusing the vendored SKIP_DIRS/findSkillDirs because the
+// vendored parser drops skills with invalid frontmatter, and list must show them.
 const MAX_DEPTH = 5;
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "build", "__pycache__"]);
+/** Longest description a row carries; matches the add candidate cap. */
+const DESCRIPTION_LIMIT = 500;
 const STATE_ORDER: Readonly<Record<SkillState, number>> = {
   managed: 0,
   unmanaged: 1,
@@ -70,17 +75,17 @@ export async function listSkills(context: OperationContext): Promise<ListPayload
   context.signal.throwIfAborted();
 
   const lockKeys = lock.ok ? Object.keys(lock.value.skills) : [];
-  const matchedKeys = new Set<string>();
+  const availableKeys = [...lockKeys];
   const presentRows = present.map((skill): ListRow => {
-    const lockKey = findLockKey(skill, lockKeys);
-    if (lockKey === null || !lock.ok) return presentRow(skill, "unmanaged", null);
-    matchedKeys.add(lockKey);
+    if (!lock.ok) return presentRow(skill, "unmanaged", null);
+    const lockKey = findLockKey(skill, availableKeys);
+    if (lockKey === null) return presentRow(skill, "unmanaged", null);
+    availableKeys.splice(availableKeys.indexOf(lockKey), 1);
     return presentRow(skill, "managed", lock.value.skills[lockKey] ?? null);
   });
   const brokenRows: ListRow[] = [];
   if (lock.ok) {
-    for (const key of lockKeys) {
-      if (matchedKeys.has(key)) continue;
+    for (const key of availableKeys) {
       brokenRows.push(brokenRow(key, lock.value.skills[key]));
     }
   }
@@ -98,27 +103,26 @@ export async function listSkills(context: OperationContext): Promise<ListPayload
 }
 
 /**
- * Resolve which lock key owns a present skill: the exact key, a key that
- * sanitises to the displayed name, then one that sanitises to the folder name.
+ * Resolve which available lock key owns a present skill: the exact displayed
+ * name, then a key that sanitises to that name, then one that sanitises to the
+ * folder name. The caller removes the result so an entry marks only one row.
  */
 function findLockKey(skill: PresentSkill, lockKeys: readonly string[]): string | null {
-  const candidates =
-    skill.name === null ? [skill.folderName] : [skill.name, skill.folderName];
-  for (const candidate of candidates) {
-    const match = matchSkillName(candidate, {
-      lockKeys,
-      folderNames: [skill.folderName],
-    });
-    if (match?.lockKey != null) return match.lockKey;
-  }
-  return null;
+  const name = skill.name ?? skill.folderName;
+  const exact = lockKeys.find((key) => key === name);
+  if (exact !== undefined) return exact;
+  const sanitisedName = sanitizeName(name);
+  const sanitisedKey = lockKeys.find((key) => sanitizeName(key) === sanitisedName);
+  if (sanitisedKey !== undefined) return sanitisedKey;
+  const sanitisedFolder = sanitizeName(skill.folderName);
+  return lockKeys.find((key) => sanitizeName(key) === sanitisedFolder) ?? null;
 }
 
 function presentRow(skill: PresentSkill, state: SkillState, entry: LockEntry | null): ListRow {
   return {
     name: skill.name ?? skill.folderName,
     folderName: skill.folderName,
-    description: skill.description ?? "",
+    description: rowDescription(skill.description),
     state,
     invalidReason: skill.invalidReason,
     source: text(entry?.["source"]),
@@ -186,11 +190,14 @@ async function readFrontmatter(skillMdPath: string): Promise<Frontmatter> {
     return { name: null, description: null, invalidReason: "SKILL.md is unreadable" };
   }
 
-  let data: Record<string, unknown>;
+  let data: unknown;
   try {
     data = parseFrontmatter(raw).data;
   } catch {
     return { name: null, description: null, invalidReason: "frontmatter is not valid YAML" };
+  }
+  if (!isPlainObject(data)) {
+    return { name: null, description: null, invalidReason: "frontmatter is not an object" };
   }
 
   const name = typeof data["name"] === "string" ? data["name"] : null;
@@ -209,4 +216,12 @@ async function readFrontmatter(skillMdPath: string): Promise<Frontmatter> {
 
 function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function rowDescription(value: string | null): string {
+  return value === null ? "" : sanitizeMetadata(value).slice(0, DESCRIPTION_LIMIT);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
