@@ -9,6 +9,8 @@ import type { Environment } from "./operations/paths.ts";
 import { resolveSkillPaths } from "./operations/paths.ts";
 import type { ListPayload } from "./operations/list.ts";
 import { listSkills } from "./operations/list.ts";
+import type { RemovePayload } from "./operations/remove.ts";
+import { readRemoveNames, removeSkills } from "./operations/remove.ts";
 import type { StatusPayload } from "./operations/status.ts";
 import { getStatus } from "./operations/status.ts";
 
@@ -19,7 +21,7 @@ export type PeerRequest = {
 };
 
 export type PeerResponse =
-  | { readonly ok: true; readonly value: StatusPayload | ListPayload }
+  | { readonly ok: true; readonly value: StatusPayload | ListPayload | RemovePayload }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
 
 /** Peer router: validate the request, then run the matching operation. */
@@ -36,6 +38,17 @@ export async function handlePeerRequest(
       signal: request.signal,
     });
     return { ok: true, value };
+  }
+  if (request.operation === "remove") {
+    const names = readRemoveNames(request.input);
+    if (names === null) return failure("invalid-input", "remove takes { names: string[] }");
+    const removed = await removeSkills(
+      { paths: resolveSkillPaths(environment), signal: request.signal },
+      names,
+    );
+    return removed.ok
+      ? { ok: true, value: removed.value }
+      : failure(removed.error.code, removed.error.message);
   }
   if (request.operation !== "status") {
     return failure("unknown-operation", `Unsupported operation "${request.operation}"`);

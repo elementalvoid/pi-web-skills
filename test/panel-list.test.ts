@@ -36,7 +36,7 @@ function isFakeTemplate(value: unknown): value is FakeTemplate {
 
 function panelContext(
   machineId: string,
-  request: () => Promise<JsonValue>,
+  request: (operation: string, input: JsonValue) => Promise<JsonValue>,
   onRender: () => void,
 ): WorkspacePanelContext {
   return {
@@ -48,12 +48,18 @@ function panelContext(
   } as unknown as WorkspacePanelContext;
 }
 
+function render(context: WorkspacePanelContext): FakeTemplate {
+  return renderSkillList(html, context) as FakeTemplate;
+}
+
 function draw(context: WorkspacePanelContext): string {
-  return textOf(renderSkillList(html, context) as FakeTemplate);
+  return textOf(render(context));
 }
 
 async function settle(): Promise<void> {
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let tick = 0; tick < 5; tick += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 const payload = {
@@ -125,7 +131,7 @@ test("the list panel shows a loading state before the server answers", () => {
   assert.match(draw(context), /Loading skills/);
 });
 
-test("the list panel renders managed, unmanaged, broken, and invalid rows without actions", async () => {
+test("the list panel renders managed, unmanaged, broken, and invalid rows", async () => {
   let renders = 0;
   const context = panelContext(
     "ready-machine",
@@ -150,8 +156,234 @@ test("the list panel renders managed, unmanaged, broken, and invalid rows withou
   assert.match(text, /Invalid frontmatter: description is missing/);
   assert.match(text, /gone/);
   assert.match(text, /Install directory is missing/);
-  assert.doesNotMatch(text, /<button/);
+  assert.match(text, /Remove entry/);
+  assert.match(text, /Not tracked by the lockfile/);
 });
+
+/** Every template in the tree, outermost first. */
+function collect(template: FakeTemplate, out: FakeTemplate[] = []): FakeTemplate[] {
+  out.push(template);
+  for (const value of template.values) {
+    if (isFakeTemplate(value)) collect(value, out);
+    else if (Array.isArray(value)) {
+      for (const item of value) if (isFakeTemplate(item)) collect(item, out);
+    }
+  }
+  return out;
+}
+
+/** The handler bound to the attribute whose literal label is `label`, e.g. one button's `@click`. */
+function handlerFor(template: FakeTemplate, attribute: string, label: string): () => void {
+  for (const node of collect(template)) {
+    for (let index = 0; index < node.strings.length; index += 1) {
+      if (!node.strings[index]?.trimEnd().endsWith(`${attribute}=`)) continue;
+      const handler = node.values[index];
+      const following = node.strings[index + 1] ?? "";
+      if (typeof handler === "function" && following.includes(label)) {
+        return handler as () => void;
+      }
+    }
+  }
+  assert.fail(`no ${attribute} handler for ${label}`);
+}
+
+function click(template: FakeTemplate, label: string): void {
+  handlerFor(template, "@click", label)();
+}
+
+type Call = { readonly operation: string; readonly input: JsonValue };
+
+function fakeServer(list: () => JsonValue, remove: (input: JsonValue) => JsonValue): {
+  readonly calls: Call[];
+  readonly request: (operation: string, input: JsonValue) => Promise<JsonValue>;
+} {
+  const calls: Call[] = [];
+  return {
+    calls,
+    request: async (operation, input) => {
+      calls.push({ operation, input });
+      if (operation === "list") return list();
+      if (operation === "remove") return remove(input);
+      throw new Error(`unexpected operation ${operation}`);
+    },
+  };
+}
+
+const noRows = { rows: [], counts: { managed: 0, unmanaged: 0, broken: 0 }, lockWarning: null };
+
+test("an unmanaged row has no action and explains that the lockfile does not track it", async () => {
+  const context = panelContext(
+    "unmanaged-action-machine",
+    async () => ({
+      ok: true,
+      value: {
+        rows: [payload.rows[1]!],
+        counts: { managed: 0, unmanaged: 1, broken: 0 },
+        lockWarning: null,
+      },
+    }),
+    () => undefined,
+  );
+  draw(context);
+  await settle();
+
+  const text = draw(context);
+
+  assert.doesNotMatch(text, /<button/);
+  assert.match(text, /Not tracked by the lockfile/);
+  assert.match(text, /cannot remove/);
+});
+
+test("Remove asks for an inline confirmation before any removal request", async () => {
+  const server = fakeServer(
+    () => ({ ok: true, value: payload }),
+    () => ({ ok: true, value: { results: [] } }),
+  );
+  const context = panelContext("confirm-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+
+  const confirming = render(context);
+  assert.match(textOf(confirming), /Remove demo\?/);
+  assert.match(textOf(confirming), /deletes its directory and lock entry/);
+  assert.match(textOf(confirming), /Yes, remove/);
+  assert.equal(server.calls.filter((call) => call.operation === "remove").length, 0);
+
+  click(confirming, "Cancel");
+
+  assert.doesNotMatch(draw(context), /Yes, remove/);
+  assert.equal(server.calls.filter((call) => call.operation === "remove").length, 0);
+});
+
+test("confirming a removal sends the row name, refreshes the list, and shows the /reload reminder", async () => {
+  let listCalls = 0;
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? { ok: true, value: payload }
+        : {
+            ok: true,
+            value: {
+              rows: payload.rows.filter((row) => row.state !== "managed"),
+              counts: { managed: 0, unmanaged: 2, broken: 1 },
+              lockWarning: null,
+            },
+          };
+    },
+    () => ({
+      ok: true,
+      value: { results: [{ name: "demo", ok: true, state: "managed", directory: "removed" }] },
+    }),
+  );
+  const context = panelContext("remove-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+
+  const text = draw(context);
+
+  assert.deepEqual(
+    server.calls.filter((call) => call.operation === "remove").map((call) => call.input),
+    [{ names: ["demo"] }],
+  );
+  assert.equal(listCalls, 2);
+  assert.match(text, /\/reload/);
+  assert.match(text, /0 managed, 2 unmanaged, 1 broken/);
+  assert.doesNotMatch(text, /<strong>demo<\/strong>/);
+});
+
+test("removing a broken entry sends its lock key and deletes only that entry", async () => {
+  const brokenOnly = {
+    rows: [payload.rows[3]!],
+    counts: { managed: 0, unmanaged: 0, broken: 1 },
+    lockWarning: null,
+  };
+  const server = fakeServer(
+    () => ({ ok: true, value: brokenOnly }),
+    () => ({
+      ok: true,
+      value: { results: [{ name: "gone", ok: true, state: "broken", directory: "absent" }] },
+    }),
+  );
+  const context = panelContext("broken-action-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove entry");
+  const confirming = render(context);
+  assert.match(textOf(confirming), /stale lock entry/);
+  assert.match(textOf(confirming), /already missing/);
+  click(confirming, "Yes, remove entry");
+  await settle();
+
+  assert.deepEqual(
+    server.calls.filter((call) => call.operation === "remove").map((call) => call.input),
+    [{ names: ["gone"] }],
+  );
+  assert.match(draw(context), /\/reload/);
+});
+
+test("a refused removal shows the server's reason and does not refresh", async () => {
+  let listCalls = 0;
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return { ok: true, value: payload };
+    },
+    () => ({
+      ok: true,
+      value: {
+        results: [
+          { name: "demo", ok: false, error: { code: "unsafe-path", message: "demo is a symlink" } },
+        ],
+      },
+    }),
+  );
+  const context = panelContext("refused-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+
+  const text = draw(context);
+
+  assert.match(text, /demo is a symlink/);
+  assert.match(text, /role="alert"|Note/);
+  assert.equal(listCalls, 1);
+});
+
+test("a rejected removal request shows the structured error and does not refresh", async () => {
+  let listCalls = 0;
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return { ok: true, value: payload };
+    },
+    () => ({
+      ok: false,
+      error: { code: "lock-unreadable", message: "Cannot read lock: not valid JSON" },
+    }),
+  );
+  const context = panelContext("rejected-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+
+  assert.match(draw(context), /Cannot read lock: not valid JSON/);
+  assert.equal(listCalls, 1);
+});
+
 
 test("the list panel renders a managed row's source, ref, and updated time", async () => {
   const context = panelContext(

@@ -16,11 +16,18 @@ const GROUPS: readonly { readonly state: SkillState; readonly title: string }[] 
   { state: "broken", title: "Broken entries" },
 ];
 
+type RowAction =
+  | { readonly kind: "confirming" }
+  | { readonly kind: "removing" }
+  | { readonly kind: "error"; readonly message: string };
+
 // Machine-wide state, keyed by machine: every workspace on a machine shares it.
 const lists = new Map<string, ListState>();
 const inFlight = new Set<string>();
+const rowActions = new Map<string, RowAction>();
+const notices = new Map<string, string>();
 
-/** Read-only list section: managed, unmanaged, broken, and invalid rows. */
+/** List section: managed, unmanaged, broken, and invalid rows, with Remove actions. */
 export function renderSkillList(
   html: HtmlTemplateTag,
   context: WorkspacePanelContext,
@@ -32,10 +39,18 @@ export function renderSkillList(
     lists.set(key, state);
     void loadList(context, key);
   }
-  return renderList(html, state);
+  const notice = notices.get(key);
+  return html`
+    ${notice === undefined ? html`` : html`<p role="status">${notice}</p>`}
+    ${renderList(html, state, context)}
+  `;
 }
 
-function renderList(html: HtmlTemplateTag, state: ListState): ReturnType<HtmlTemplateTag> {
+function renderList(
+  html: HtmlTemplateTag,
+  state: ListState,
+  context: WorkspacePanelContext,
+): ReturnType<HtmlTemplateTag> {
   if (state.kind === "loading") {
     return html`<p aria-live="polite">Loading skills…</p>`;
   }
@@ -56,7 +71,7 @@ function renderList(html: HtmlTemplateTag, state: ListState): ReturnType<HtmlTem
   return html`
     ${warning}
     <p>${summary}</p>
-    ${GROUPS.map((group) => renderGroup(html, list.rows, group.state, group.title))}
+    ${GROUPS.map((group) => renderGroup(html, list.rows, group.state, group.title, context))}
   `;
 }
 
@@ -65,6 +80,7 @@ function renderGroup(
   rows: readonly ListRow[],
   state: SkillState,
   title: string,
+  context: WorkspacePanelContext,
 ): ReturnType<HtmlTemplateTag> {
   const group = rows.filter((row) => row.state === state);
   if (group.length === 0) return html``;
@@ -72,13 +88,17 @@ function renderGroup(
     <section>
       <h3>${title} (${group.length})</h3>
       <ul>
-        ${group.map((row) => renderRow(html, row))}
+        ${group.map((row) => renderRow(html, row, context))}
       </ul>
     </section>
   `;
 }
 
-function renderRow(html: HtmlTemplateTag, row: ListRow): ReturnType<HtmlTemplateTag> {
+function renderRow(
+  html: HtmlTemplateTag,
+  row: ListRow,
+  context: WorkspacePanelContext,
+): ReturnType<HtmlTemplateTag> {
   const details: string[] = [];
   if (row.source !== null) details.push(`${row.sourceType ?? "source"} ${row.source}`);
   if (row.ref !== null) details.push(`ref ${row.ref}`);
@@ -95,12 +115,141 @@ function renderRow(html: HtmlTemplateTag, row: ListRow): ReturnType<HtmlTemplate
         ? html`<p>Install directory is missing.</p>`
         : html`<p><code>${row.folderName}</code></p>`}
       ${details.length === 0 ? html`` : html`<p>${details.join(" · ")}</p>`}
+      ${row.state === "unmanaged"
+        ? html`<p>Not tracked by the lockfile; the panel cannot remove this skill.</p>`
+        : renderRemoveAction(html, row, context)}
     </li>
   `;
 }
 
-async function loadList(context: WorkspacePanelContext, key: string): Promise<void> {
-  if (inFlight.has(key)) return;
+/**
+ * Remove or Remove entry, gated by an inline confirmation. Broken rows only
+ * delete the stale lock entry; managed rows delete the directory as well.
+ */
+function renderRemoveAction(
+  html: HtmlTemplateTag,
+  row: ListRow,
+  context: WorkspacePanelContext,
+): ReturnType<HtmlTemplateTag> {
+  const key = rowKey(context.machine.id, row);
+  const action = rowActions.get(key);
+  if (action?.kind === "removing") {
+    return html`<p aria-live="polite">Removing…</p>`;
+  }
+  const failure =
+    action?.kind === "error" ? html`<p role="alert">${action.message}</p>` : html``;
+
+  if (action?.kind !== "confirming") {
+    if (row.state === "broken") {
+      return html`<button type="button" @click=${() => startRemove(context, key)}>
+        Remove entry
+      </button>
+      ${failure}`;
+    }
+    return html`<button type="button" @click=${() => startRemove(context, key)}>
+      Remove
+    </button>
+    ${failure}`;
+  }
+
+  if (row.state === "broken") {
+    return html`
+      <p role="alert">
+        Remove the stale lock entry for ${row.name}? Its install directory is already missing.
+      </p>
+      <button type="button" @click=${() => void confirmRemove(context, row, key)}>
+        Yes, remove entry
+      </button>
+      <button type="button" @click=${() => cancelRemove(context, key)}>Cancel</button>
+      ${failure}
+    `;
+  }
+  return html`
+    <p role="alert">Remove ${row.name}? This deletes its directory and lock entry.</p>
+    <button type="button" @click=${() => void confirmRemove(context, row, key)}>Yes, remove</button>
+    <button type="button" @click=${() => cancelRemove(context, key)}>Cancel</button>
+    ${failure}
+  `;
+}
+
+function rowKey(machineId: string, row: ListRow): string {
+  return `${machineId}\u0000${row.state}\u0000${row.name}`;
+}
+
+function startRemove(context: WorkspacePanelContext, key: string): void {
+  rowActions.set(key, { kind: "confirming" });
+  context.host.requestRender();
+}
+
+function cancelRemove(context: WorkspacePanelContext, key: string): void {
+  rowActions.delete(key);
+  context.host.requestRender();
+}
+
+/** Remove the row's identity, then re-read the list and remind the user to /reload. */
+async function confirmRemove(
+  context: WorkspacePanelContext,
+  row: ListRow,
+  key: string,
+): Promise<void> {
+  rowActions.set(key, { kind: "removing" });
+  context.host.requestRender();
+  try {
+    if (context.peer?.request === undefined) {
+      throw new Error("The Skills backend is unavailable on the selected machine.");
+    }
+    // The install folder is the identity matching is sure to resolve back to the
+    // entry, and a broken row has no folder, so its lock key is the identity.
+    const identity = row.folderName ?? row.name;
+    const response = await context.peer.request("remove", { names: [identity] });
+    const refusal = readRemovalRefusal(response);
+    if (refusal !== null) throw new Error(refusal);
+    rowActions.delete(key);
+    const reminder = "Run /reload in each session to apply the change.";
+    notices.set(
+      context.machine.id,
+      row.state === "broken"
+        ? `Removed the stale lock entry for ${row.name}. ${reminder}`
+        : `Removed ${row.name}. ${reminder}`,
+    );
+    await loadList(context, context.machine.id, true);
+  } catch (error) {
+    rowActions.set(key, { kind: "error", message: describe(error) });
+    context.host.requestRender();
+  }
+}
+
+/** A per-name refusal or a rejected request as a message; null means the removal succeeded. */
+function readRemovalRefusal(response: JsonValue): string | null {
+  if (!isRecord(response)) return "The server returned an invalid removal.";
+  if (response["ok"] !== true) {
+    const error = response["error"];
+    return isRecord(error) && typeof error["message"] === "string"
+      ? error["message"]
+      : "The server rejected the removal.";
+  }
+  const value = response["value"];
+  if (!isRecord(value) || !Array.isArray(value["results"])) {
+    return "The server returned an invalid removal.";
+  }
+  for (const result of value["results"]) {
+    if (!isRecord(result)) return "The server returned an invalid removal.";
+    if (result["ok"] === true) continue;
+    const error = result["error"];
+    return isRecord(error) && typeof error["message"] === "string"
+      ? error["message"]
+      : "The removal failed.";
+  }
+  return null;
+}
+
+/** `force` bypasses the in-flight guard so a mutation's refresh always re-reads. */
+async function loadList(
+  context: WorkspacePanelContext,
+  key: string,
+  force = false,
+): Promise<void> {
+  if (!force && inFlight.has(key)) return;
   inFlight.add(key);
   try {
     if (context.peer?.request === undefined) throw new Error("The package peer is unavailable");
@@ -190,4 +339,8 @@ function readNullableString(
   if (field === null || field === undefined) return null;
   if (typeof field !== "string") throw new Error(`The server returned an invalid list row: ${key}`);
   return field;
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

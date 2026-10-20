@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { JsonValue } from "@jmfederico/pi-web/server-plugin-api";
+import { resolveSkillPaths } from "../src/operations/paths.ts";
 import { handlePeerRequest } from "../src/server.ts";
 
 const signal = new AbortController().signal;
@@ -141,4 +142,58 @@ test("the activated plugin opens an add channel that rejects malformed input", a
       error: { code: "invalid-input", message: "add takes { source: string }." },
     },
   ]);
+});
+
+test("a remove request removes a managed install and reports the outcome", async () => {
+  await withTemporaryHome(async (home) => {
+    const paths = resolveSkillPaths({ home });
+    await mkdir(join(paths.managedDirectory, "demo"), { recursive: true });
+    await writeFile(join(paths.managedDirectory, "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    await mkdir(join(home, ".agents"), { recursive: true });
+    await writeFile(
+      paths.lockfilePath,
+      JSON.stringify({
+        version: 3,
+        skills: {
+          demo: {
+            source: "owner/repo",
+            sourceType: "github",
+            sourceUrl: "https://github.com/owner/repo.git",
+            skillPath: "skills/demo/SKILL.md",
+            skillFolderHash: "0123456789abcdef0123456789abcdef01234567",
+            installedAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const response = await handlePeerRequest(
+      { operation: "remove", input: { names: ["demo"] }, signal },
+      { home },
+    );
+
+    assert.deepEqual(response, {
+      ok: true,
+      value: {
+        results: [{ name: "demo", ok: true, state: "managed", directory: "removed" }],
+      },
+    });
+    await assert.rejects(stat(join(paths.managedDirectory, "demo")), /ENOENT/);
+  });
+});
+
+test("a malformed remove input returns a structured error instead of throwing", async () => {
+  const malformed: JsonValue[] = [null, {}, { names: "demo" }, { names: [] }, { names: [1] }];
+  for (const input of malformed) {
+    const response = await handlePeerRequest(
+      { operation: "remove", input, signal },
+      { home: "/tmp/pi-web-skills-home" },
+    );
+
+    assert.deepEqual(response, {
+      ok: false,
+      error: { code: "invalid-input", message: "remove takes { names: string[] }" },
+    });
+  }
 });

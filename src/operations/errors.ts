@@ -19,6 +19,9 @@ export type OperationErrorCode =
   | "folder-hash-failed"
   | "discovery-failed"
   | "skill-not-found"
+  | "not-found"
+  | "not-managed"
+  | "remove-failed"
   | "not-implemented";
 
 export type OperationError = {
