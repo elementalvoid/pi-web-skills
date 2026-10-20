@@ -21,7 +21,7 @@ managed directory is `/data/home/.agents/skills` and the lock is
 `/data/home/.agents/.skill-lock.json`.
 
 <p align="center">
-  <img src="docs/skills-panel.png" alt="The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions" width="900">
+  <img src="docs/skills-panel.png" alt="The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions" width="588">
 </p>
 
 Five operations:

@@ -120,7 +120,7 @@ try {
     await page.setViewportSize({ width: 1400, height: 1400 });
     const firstRow = page.locator(".skills-panel .skills-row").first();
     await firstRow.locator(".skills-row-title").click();
-    await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: false });
+    await page.locator(".skills-panel").screenshot({ path: process.env.E2E_SCREENSHOT });
   }
   const unmanaged = page.getByRole("heading", { name: /^Unmanaged skills/ }).locator("..");
   assert.equal(
