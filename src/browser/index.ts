@@ -4,8 +4,10 @@ import type {
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
 import type { StatusPayload } from "../operations/status.ts";
+import { createAddHandoff } from "./add-handoff.ts";
 import { createAddPanel } from "./add-panel.ts";
 import { renderSkillList } from "./list.ts";
+import { createSearchPanel } from "./search-panel.ts";
 
 type StatusState =
   | { readonly kind: "loading" }
@@ -20,7 +22,9 @@ const plugin = {
   apiVersion: 4,
   name: "Skills",
   activate: ({ html }) => {
-    const renderAdd = createAddPanel(html);
+    const addHandoff = createAddHandoff();
+    const renderAdd = createAddPanel(html, addHandoff);
+    const renderSearch = createSearchPanel(html, addHandoff);
     const renderStatus = (status: StatusState) => {
       if (status.kind === "loading") {
         return html`<p aria-live="polite">Loading machine status…</p>`;
@@ -67,6 +71,7 @@ const plugin = {
                   </p>
                   ${renderStatus(status)}
                   ${renderAdd(context)}
+                  ${renderSearch(context)}
                   ${renderSkillList(html, context)}
                 </section>
               `;

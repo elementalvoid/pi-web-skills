@@ -11,6 +11,8 @@ import type { ListPayload } from "./operations/list.ts";
 import { listSkills } from "./operations/list.ts";
 import type { RemovePayload } from "./operations/remove.ts";
 import { readRemoveNames, removeSkills } from "./operations/remove.ts";
+import type { FetchLike, SearchPayload } from "./operations/search.ts";
+import { readSearchQuery, searchSkills } from "./operations/search.ts";
 import type { StatusPayload } from "./operations/status.ts";
 import { getStatus } from "./operations/status.ts";
 
@@ -21,13 +23,23 @@ export type PeerRequest = {
 };
 
 export type PeerResponse =
-  | { readonly ok: true; readonly value: StatusPayload | ListPayload | RemovePayload }
+  | {
+      readonly ok: true;
+      readonly value: StatusPayload | ListPayload | RemovePayload | SearchPayload;
+    }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
+
+/** Injectable network seam; production uses the global fetch against skills.sh. */
+export type PeerDependencies = {
+  readonly fetch?: FetchLike;
+  readonly searchBaseUrl?: string;
+};
 
 /** Peer router: validate the request, then run the matching operation. */
 export async function handlePeerRequest(
   request: PeerRequest,
   environment: Environment,
+  dependencies: PeerDependencies = {},
 ): Promise<PeerResponse> {
   if (request.operation === "list") {
     if (request.input !== null) {
@@ -49,6 +61,21 @@ export async function handlePeerRequest(
     return removed.ok
       ? { ok: true, value: removed.value }
       : failure(removed.error.code, removed.error.message);
+  }
+  if (request.operation === "search") {
+    const query = readSearchQuery(request.input);
+    if (query === null) return failure("invalid-input", "search takes { query: string }");
+    const found = await searchSkills(
+      {
+        signal: request.signal,
+        fetch: dependencies.fetch ?? hostFetch,
+        baseUrl: dependencies.searchBaseUrl,
+      },
+      query,
+    );
+    return found.ok
+      ? { ok: true, value: found.value }
+      : failure(found.error.code, found.error.message);
   }
   if (request.operation !== "status") {
     return failure("unknown-operation", `Unsupported operation "${request.operation}"`);
@@ -100,3 +127,8 @@ function daemonEnvironment(): Environment {
 function failure(code: string, message: string): PeerResponse {
   return { ok: false, error: { code, message } };
 }
+
+const hostFetch: FetchLike = async (url, init) => {
+  const response = await fetch(url, { signal: init.signal });
+  return { ok: response.ok, status: response.status, json: () => response.json() };
+};

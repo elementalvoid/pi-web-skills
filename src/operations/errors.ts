@@ -22,7 +22,10 @@ export type OperationErrorCode =
   | "skill-not-found"
   | "not-found"
   | "not-managed"
-  | "remove-failed";
+  | "remove-failed"
+  | "search-unavailable"
+  | "search-invalid-response"
+  | "cancelled";
 
 export type OperationError = {
   readonly code: OperationErrorCode;
