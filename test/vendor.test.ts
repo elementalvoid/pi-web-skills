@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -51,6 +51,12 @@ test("PROVENANCE lists exactly the pinned modules plus the upstream LICENSE", as
   const listed = [...(await provenanceTable()).keys()].sort();
 
   assert.deepEqual(listed, [...pinnedModules, "LICENSE"].sort());
+});
+
+test("the vendor directory holds exactly the files PROVENANCE records", async () => {
+  const onDisk = (await readdir(vendorDirectory)).sort();
+
+  assert.deepEqual(onDisk, [...pinnedModules, "LICENSE", "PROVENANCE.md"].sort());
 });
 
 test("every vendored file matches its recorded hash, so vendor files are unedited", async () => {
