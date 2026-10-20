@@ -1,11 +1,30 @@
+/** Strict JSON value carried by error details; operations never exchange functions or classes. */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
 /** Structured failure carried by operations instead of a thrown error. */
 export type OperationErrorCode = "lock-unreadable" | "unsafe-path";
 
 export type OperationError = {
   readonly code: OperationErrorCode;
   readonly message: string;
+  readonly details?: JsonValue;
 };
 
-export function operationError(code: OperationErrorCode, message: string): OperationError {
-  return { code, message };
+/** One operation outcome: a JSON-friendly value or a structured error. */
+export type ResultFailure = { readonly ok: false; readonly error: OperationError };
+
+export type Result<T> = { readonly ok: true; readonly value: T } | ResultFailure;
+
+export function operationError(
+  code: OperationErrorCode,
+  message: string,
+  details?: JsonValue,
+): OperationError {
+  return details === undefined ? { code, message } : { code, message, details };
 }
