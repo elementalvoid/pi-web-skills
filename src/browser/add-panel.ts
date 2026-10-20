@@ -4,6 +4,8 @@ import type {
   PluginPeerChannel,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
+import { sanitizeName } from "../operations/matching.ts";
+import type { AddHandoffBox } from "./add-handoff.ts";
 import { refreshSkillList } from "./list.ts";
 
 type Template = ReturnType<HtmlTemplateTag>;
@@ -27,15 +29,21 @@ type AddState = {
   channel: PluginPeerChannel | null;
   pending: AbortController | null;
   reloadReminder: boolean;
+  /** Skill a Search handoff asked for; selected once the source resolves. */
+  wantedSkill: string | null;
 };
 
 const EXISTING = ["none", "managed", "unmanaged"] as const;
 
 /**
  * The Add source and selection panel. State is per hosted panel; the channel is
- * opened only on an explicit Resolve and closed on cancel or a terminal frame.
+ * opened on an explicit Resolve or a Search handoff and closed on cancel or a
+ * terminal frame.
  */
-export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelContext) => Template {
+export function createAddPanel(
+  html: HtmlTemplateTag,
+  handoff?: AddHandoffBox,
+): (context: WorkspacePanelContext) => Template {
   const states = new Map<string, AddState>();
 
   const stateFor = (context: WorkspacePanelContext): AddState => {
@@ -51,6 +59,7 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
         channel: null,
         pending: null,
         reloadReminder: false,
+        wantedSkill: null,
       };
       states.set(key, state);
     }
@@ -89,6 +98,7 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
       }
       if (frame.type === "candidates-end") {
         state.phase = "candidates";
+        selectWantedSkill(state);
         state.message =
           state.candidates.length === 0
             ? "The source provides no skills."
@@ -257,6 +267,16 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
       render();
     };
 
+    const pendingHandoff = handoff?.pending ?? null;
+    // A Search handoff waits until the current resolve or install finishes, so
+    // it can never silently cancel running work.
+    if (pendingHandoff !== null && handoff !== undefined && !busy) {
+      handoff.pending = null;
+      state.source = pendingHandoff.source;
+      state.wantedSkill = pendingHandoff.skillName;
+      void resolve();
+    }
+
     return html`
       <section aria-labelledby="skills-add-heading">
         <h3 id="skills-add-heading">Add skills</h3>
@@ -359,6 +379,21 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
       </section>
     `;
   };
+}
+
+/** Select the skill a Search handoff asked for; no match leaves every candidate unselected. */
+function selectWantedSkill(state: AddState): void {
+  const wanted = state.wantedSkill;
+  state.wantedSkill = null;
+  if (wanted === null) return;
+  const sanitized = sanitizeName(wanted);
+  const match = state.candidates.find(
+    (candidate) =>
+      candidate.name === wanted ||
+      sanitizeName(candidate.name) === sanitized ||
+      sanitizeName(candidate.folderName) === sanitized,
+  );
+  if (match !== undefined) state.selected.add(match.sourcePath);
 }
 
 type ServerFrame =

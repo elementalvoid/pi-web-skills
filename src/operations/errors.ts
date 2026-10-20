@@ -21,7 +21,10 @@ export type OperationErrorCode =
   | "install-failed"
   | "not-found"
   | "not-managed"
-  | "remove-failed";
+  | "remove-failed"
+  | "search-unavailable"
+  | "search-invalid-response"
+  | "cancelled";
 
 export type OperationError = {
   readonly code: OperationErrorCode;
