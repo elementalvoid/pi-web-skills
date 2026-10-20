@@ -41,7 +41,7 @@ export type ListPayload = {
 // vendored parser drops skills with invalid frontmatter, and list must show them.
 const MAX_DEPTH = 5;
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "build", "__pycache__"]);
-/** Longest description a row carries; matches the add candidate cap. */
+/** Longest description a row carries. */
 const DESCRIPTION_LIMIT = 500;
 const STATE_ORDER: Readonly<Record<SkillState, number>> = {
   managed: 0,
