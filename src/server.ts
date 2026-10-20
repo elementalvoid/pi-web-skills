@@ -5,6 +5,7 @@ import type {
   ServerPluginPeerRequestContext,
 } from "@jmfederico/pi-web/server-plugin-api";
 import { openAddChannel } from "./operations/add-channel.ts";
+import { openUpdateChannel } from "./operations/update-channel.ts";
 import type { Environment } from "./operations/paths.ts";
 import { resolveSkillPaths } from "./operations/paths.ts";
 import type { ListPayload } from "./operations/list.ts";
@@ -72,26 +73,37 @@ const plugin: PiWebServerPlugin = {
             { operation: context.operation, input: context.input, signal: context.signal },
             daemonEnvironment(),
           ),
-        openChannel: (context) =>
-          openAddChannel(
-            {
-              operation: context.operation,
-              input: context.input,
-              signal: context.signal,
-              send: context.send,
-            },
-            {
-              paths: resolveSkillPaths(daemonEnvironment()),
-              exec: execFile,
-              tempRoot: tmpdir(),
-            },
-          ),
+        openChannel: (context) => {
+          const channel = {
+            operation: context.operation,
+            input: context.input,
+            signal: context.signal,
+            send: context.send,
+          };
+          const dependencies = {
+            paths: resolveSkillPaths(daemonEnvironment()),
+            exec: execFile,
+            tempRoot: tmpdir(),
+          };
+          if (context.operation === "update") {
+            return openUpdateChannel(channel, {
+              ...dependencies,
+              fetch: globalThis.fetch,
+              getToken: githubToken,
+            });
+          }
+          return openAddChannel(channel, dependencies);
+        },
       },
     };
   },
 };
 
 export default plugin;
+
+function githubToken(): string | null {
+  return process.env["GITHUB_TOKEN"] ?? process.env["GH_TOKEN"] ?? null;
+}
 
 function daemonEnvironment(): Environment {
   return { home: homedir(), xdgStateHome: process.env["XDG_STATE_HOME"] };

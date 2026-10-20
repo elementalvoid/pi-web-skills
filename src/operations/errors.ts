@@ -22,7 +22,8 @@ export type OperationErrorCode =
   | "skill-not-found"
   | "not-found"
   | "not-managed"
-  | "remove-failed";
+  | "remove-failed"
+  | "update-failed";
 
 export type OperationError = {
   readonly code: OperationErrorCode;

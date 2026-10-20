@@ -6,6 +6,7 @@ import type {
 import type { StatusPayload } from "../operations/status.ts";
 import { createAddPanel } from "./add-panel.ts";
 import { renderSkillList } from "./list.ts";
+import { createUpdatePanel } from "./update-panel.ts";
 
 type StatusState =
   | { readonly kind: "loading" }
@@ -21,6 +22,7 @@ const plugin = {
   name: "Skills",
   activate: ({ html }) => {
     const renderAdd = createAddPanel(html);
+    const renderUpdate = createUpdatePanel(html);
     const renderStatus = (status: StatusState) => {
       if (status.kind === "loading") {
         return html`<p aria-live="polite">Loading machine status…</p>`;
@@ -67,6 +69,7 @@ const plugin = {
                   </p>
                   ${renderStatus(status)}
                   ${renderAdd(context)}
+                  ${renderUpdate(context)}
                   ${renderSkillList(html, context)}
                 </section>
               `;

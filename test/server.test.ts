@@ -95,6 +95,34 @@ test("a status request returns the resolved paths and existence flags", async ()
 });
 
 test("the activated plugin opens an add channel that rejects malformed input", async () => {
+  const { frames, close } = await openPluginChannel("add", null);
+  await close();
+
+  assert.deepEqual(frames, [
+    {
+      type: "error",
+      error: { code: "invalid-input", message: "add takes { source: string }." },
+    },
+  ]);
+});
+
+test("the update channel is routed and rejects malformed input without network work", async () => {
+  const { frames, close } = await openPluginChannel("update", { names: "alpha" });
+  await close();
+
+  assert.deepEqual(frames, [
+    {
+      type: "error",
+      error: { code: "invalid-input", message: "update takes { names?: string[] }." },
+    },
+  ]);
+});
+
+/** Activate the real plugin and open one peer channel with the host's context shape. */
+async function openPluginChannel(
+  operation: string,
+  input: JsonValue,
+): Promise<{ frames: JsonValue[]; close: () => Promise<void> }> {
   const { default: plugin } = await import("../src/server.ts");
   const frames: JsonValue[] = [];
   const lifetime = new AbortController();
@@ -129,20 +157,18 @@ test("the activated plugin opens an add channel that rejects malformed input", a
       label: "Project",
       isMain: true,
     },
-    operation: "add",
-    input: null,
+    operation,
+    input,
     signal: lifetime.signal,
     send: (frame) => frames.push(frame),
   });
-  await channel.close?.({ code: 1000, reason: "test", signal: lifetime.signal });
-
-  assert.deepEqual(frames, [
-    {
-      type: "error",
-      error: { code: "invalid-input", message: "add takes { source: string }." },
+  return {
+    frames,
+    close: async () => {
+      await channel.close?.({ code: 1000, reason: "test", signal: lifetime.signal });
     },
-  ]);
-});
+  };
+}
 
 test("a remove request removes a managed install and reports the outcome", async () => {
   await withTemporaryHome(async (home) => {
