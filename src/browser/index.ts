@@ -4,6 +4,7 @@ import type {
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
 import type { StatusPayload } from "../operations/status.ts";
+import { renderSkillList } from "./list.ts";
 
 type StatusState =
   | { readonly kind: "loading" }
@@ -63,6 +64,7 @@ const plugin = {
                     Installed skills are available to every workspace on this machine.
                   </p>
                   ${renderStatus(status)}
+                  ${renderSkillList(html, context)}
                 </section>
               `;
             },

@@ -20,13 +20,13 @@ async function withTemporaryHome(
 
 test("an unknown operation returns a structured error instead of throwing", async () => {
   const response = await handlePeerRequest(
-    { operation: "list", input: null, signal },
+    { operation: "frobnicate", input: null, signal },
     { home: "/tmp/pi-web-skills-home" },
   );
 
   assert.deepEqual(response, {
     ok: false,
-    error: { code: "unknown-operation", message: 'Unsupported operation "list"' },
+    error: { code: "unknown-operation", message: 'Unsupported operation "frobnicate"' },
   });
 });
 
@@ -39,6 +39,36 @@ test("a malformed status input returns a structured error instead of throwing", 
   assert.deepEqual(response, {
     ok: false,
     error: { code: "invalid-input", message: "status takes no input" },
+  });
+});
+
+test("a list request returns rows, counts, and no lock warning", async () => {
+  await withTemporaryHome(async (home) => {
+    const response = await handlePeerRequest(
+      { operation: "list", input: null, signal },
+      { home },
+    );
+
+    assert.deepEqual(response, {
+      ok: true,
+      value: {
+        rows: [],
+        counts: { managed: 0, unmanaged: 0, broken: 0 },
+        lockWarning: null,
+      },
+    });
+  });
+});
+
+test("a malformed list input returns a structured error instead of throwing", async () => {
+  const response = await handlePeerRequest(
+    { operation: "list", input: {}, signal },
+    { home: "/tmp/pi-web-skills-home" },
+  );
+
+  assert.deepEqual(response, {
+    ok: false,
+    error: { code: "invalid-input", message: "list takes no input" },
   });
 });
 

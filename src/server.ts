@@ -6,6 +6,8 @@ import type {
 } from "@jmfederico/pi-web/server-plugin-api";
 import type { Environment } from "./operations/paths.ts";
 import { resolveSkillPaths } from "./operations/paths.ts";
+import type { ListPayload } from "./operations/list.ts";
+import { listSkills } from "./operations/list.ts";
 import type { StatusPayload } from "./operations/status.ts";
 import { getStatus } from "./operations/status.ts";
 
@@ -16,7 +18,7 @@ export type PeerRequest = {
 };
 
 export type PeerResponse =
-  | { readonly ok: true; readonly value: StatusPayload }
+  | { readonly ok: true; readonly value: StatusPayload | ListPayload }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
 
 /** Peer router: validate the request, then run the matching operation. */
@@ -24,6 +26,16 @@ export async function handlePeerRequest(
   request: PeerRequest,
   environment: Environment,
 ): Promise<PeerResponse> {
+  if (request.operation === "list") {
+    if (request.input !== null) {
+      return failure("invalid-input", "list takes no input");
+    }
+    const value = await listSkills({
+      paths: resolveSkillPaths(environment),
+      signal: request.signal,
+    });
+    return { ok: true, value };
+  }
   if (request.operation !== "status") {
     return failure("unknown-operation", `Unsupported operation "${request.operation}"`);
   }
