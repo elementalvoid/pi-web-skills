@@ -1,0 +1,47 @@
+{
+  "name": "pi-web-skills",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PI WEB panel for managing the agent skills Pi loads from ~/.agents/skills",
+  "keywords": [
+    "pi-web",
+    "pi-web-plugin",
+    "pi-package",
+    "skills",
+    "agent-skills"
+  ],
+  "engines": {
+    "node": ">=22.20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@jmfederico/pi-web": "^1.202610.1",
+    "@types/node": "^24.13.3",
+    "skills": "1.7.4",
+    "typescript": "^6.0.3"
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "skills",
+        "browserRoot": "dist/browser",
+        "module": "dist/browser/index.js",
+        "serverModule": "dist/server.js",
+        "machineSpecific": true
+      }
+    ]
+  },
+  "files": [
+    "dist",
+    "docs",
+    "GLOSSARY.md",
+    "README.md"
+  ]
+}
