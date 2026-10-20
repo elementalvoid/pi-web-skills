@@ -635,3 +635,62 @@ test("a lock failure after the directory removal refreshes to the broken row and
   assert.match(text, /\/reload/, "the directory changed, so the reminder still applies");
   assert.doesNotMatch(text, /EACCES/);
 });
+
+test("a list error offers Retry and a retry reads the rows again", async () => {
+  let calls = 0;
+  const context = panelContext(
+    "list-retry-machine",
+    async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("peer offline");
+      return { ok: true, value: payload };
+    },
+    () => undefined,
+  );
+  draw(context);
+  await settle();
+  assert.match(draw(context), /Skills unavailable: peer offline/);
+
+  click(render(context), "Retry");
+  draw(context);
+  await settle();
+
+  const text = draw(context);
+  assert.equal(calls, 2);
+  assert.match(text, /1 managed, 2 unmanaged, 1 broken/);
+});
+
+test("the removal success notice is dismissible", async () => {
+  let listCalls = 0;
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? { ok: true, value: payload }
+        : {
+            ok: true,
+            value: {
+              rows: payload.rows.filter((row) => row.state !== "managed"),
+              counts: { managed: 0, unmanaged: 2, broken: 1 },
+              lockWarning: null,
+            },
+          };
+    },
+    () => ({
+      ok: true,
+      value: { results: [{ name: "demo", ok: true, state: "managed", directory: "removed" }] },
+    }),
+  );
+  const context = panelContext("dismiss-notice-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+  assert.match(draw(context), /Run \/reload/);
+
+  click(render(context), "Dismiss");
+
+  assert.doesNotMatch(draw(context), /Run \/reload/);
+  assert.match(draw(context), /0 managed, 2 unmanaged, 1 broken/);
+});

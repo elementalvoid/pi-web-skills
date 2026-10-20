@@ -4,6 +4,7 @@ import type {
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
 import type { ListPayload, ListRow, SkillState } from "../operations/list.ts";
+import { refreshMachineStatus } from "./status.ts";
 
 type ListState =
   | { readonly kind: "loading" }
@@ -55,7 +56,20 @@ export function renderSkillList(
   }
   const notice = notices.get(key);
   return html`
-    ${notice === undefined ? html`` : html`<p role="status">${notice}</p>`}
+    ${notice === undefined
+      ? html``
+      : html`<p role="status">
+          ${notice}
+          <button
+            type="button"
+            @click=${() => {
+              notices.delete(key);
+              context.host.requestRender();
+            }}
+          >
+            Dismiss
+          </button>
+        </p>`}
     ${renderList(html, state, context)}
   `;
 }
@@ -68,6 +82,8 @@ export function refreshSkillList(context: WorkspacePanelContext): void {
   clearRowActions(key);
   // Invalidate any response already in flight; the next render loads a new one.
   nextGeneration(key);
+  // A mutation can create or empty the managed directory and the lockfile.
+  refreshMachineStatus(context);
   context.host.requestRender();
 }
 
@@ -80,7 +96,10 @@ function renderList(
     return html`<p aria-live="polite">Loading skills…</p>`;
   }
   if (state.kind === "error") {
-    return html`<p role="alert">Skills unavailable: ${state.message}</p>`;
+    return html`
+      <p role="alert">Skills unavailable: ${state.message}</p>
+      <button type="button" @click=${() => refreshSkillList(context)}>Retry</button>
+    `;
   }
 
   const { list } = state;

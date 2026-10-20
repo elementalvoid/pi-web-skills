@@ -4,6 +4,7 @@ import type {
   HtmlTemplateTag,
   JsonValue,
   PluginPeerChannel,
+  PluginPeerChannelClose,
   PluginPeerChannelOptions,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
@@ -330,4 +331,90 @@ test("the done frame reports replaced and failed names and shows no reminder for
   onData({ type: "done", installed: [], replaced: [], failed: [{ name: "alpha", message: "Cannot copy alpha." }] });
   const failedText = textOf(panel(context));
   assert.doesNotMatch(failedText, /\/reload/);
+});
+
+function closableChannel(sent: JsonValue[], closeReasons: string[]): {
+  readonly channel: PluginPeerChannel;
+  readonly finish: () => void;
+} {
+  let finish: () => void = () => undefined;
+  const closed = new Promise<PluginPeerChannelClose>((resolve) => {
+    finish = () => resolve({ code: 1000, reason: "closed", wasClean: true });
+  });
+  return {
+    channel: {
+      closed,
+      send: (data) => sent.push(data),
+      close: (reason) => closeReasons.push(reason ?? ""),
+    },
+    finish,
+  };
+}
+
+test("a channel that closes mid-install says so instead of leaving a dead progress line", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const { channel, finish } = closableChannel(sent, closeReasons);
+  const host: Host = {
+    channelOptions: [],
+    requests: [],
+    channelOpen: async () => channel,
+  };
+  const panel = createAddPanel(html) as unknown as (
+    context: WorkspacePanelContext,
+  ) => FakeTemplate;
+  const context = panelContext(host, "closed-machine");
+
+  submit(setSource(panel, context, "owner/repo"));
+  await tick();
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "candidates", candidates: [{ ...candidate, existing: "none" }] });
+  onData({ type: "candidates-end", total: 1 });
+  fire(panel(context), "Select all", "@change");
+  click(panel(context), "Install selected");
+  onData({ type: "progress", phase: "installing", name: "notes", index: 0, total: 1 });
+  assert.match(textOf(panel(context)), /Installing 1 of 1/);
+
+  finish();
+  await tick();
+
+  const text = textOf(panel(context));
+  assert.doesNotMatch(text, /Installing 1 of 1/, "the dead progress line is replaced");
+  assert.match(text, /closed before it finished/);
+  assert.match(text, /Resolve the source again/);
+});
+
+test("resolving a new source clears the previous install's reload reminder", async () => {
+  const sent: JsonValue[] = [];
+  const channel = fakeChannel(sent, []);
+  const host: Host = {
+    channelOptions: [],
+    requests: [],
+    channelOpen: async () => channel,
+  };
+  const panel = createAddPanel(html) as unknown as (
+    context: WorkspacePanelContext,
+  ) => FakeTemplate;
+  const context = panelContext(host, "reminder-machine");
+
+  submit(setSource(panel, context, "owner/repo"));
+  await tick();
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "candidates", candidates: [{ ...candidate, existing: "none" }] });
+  onData({ type: "candidates-end", total: 1 });
+  fire(panel(context), "Select all", "@change");
+  click(panel(context), "Install selected");
+  onData({ type: "done", installed: ["notes"], replaced: [], failed: [] });
+  assert.match(textOf(panel(context)), /\/reload/);
+
+  submit(setSource(panel, context, "owner/other"));
+  await tick();
+  const nextData = host.channelOptions[1]?.onData;
+  assert.ok(nextData !== undefined);
+  nextData({ type: "candidates", candidates: [{ ...candidate, existing: "none" }] });
+  nextData({ type: "candidates-end", total: 1 });
+
+  assert.doesNotMatch(textOf(panel(context)), /\/reload/, "the old reminder is stale");
 });

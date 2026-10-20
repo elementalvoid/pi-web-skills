@@ -63,3 +63,17 @@ test("a broken entry resolves without a folder", () => {
 test("an unknown name resolves nothing", () => {
   assert.equal(matchSkillName("absent", { lockKeys: ["demo"], folderNames: ["demo"] }), null);
 });
+
+test("the browser's copy of the folder rule agrees with the operation rule", async () => {
+  const { sanitizeName: browserSanitizeName } = await import("../src/browser/sanitize-name.ts");
+  for (const name of [
+    "ce:review",
+    "React Best Practices!",
+    "  .hidden.name  ",
+    "../escape",
+    "###",
+    "x".repeat(300),
+  ]) {
+    assert.equal(browserSanitizeName(name), sanitizeName(name), name);
+  }
+});

@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "node --test test"
+    "test": "node --test test",
+    "test:e2e": "npm run build && node e2e/skills-panel.e2e.mjs"
   },
   "dependencies": {
     "yaml": "^2.8.3"
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@jmfederico/pi-web": "^1.202610.1",
     "@types/node": "^24.13.3",
+    "playwright": "1.63.0",
     "skills": "1.7.4",
     "typescript": "^6.0.3"
   },

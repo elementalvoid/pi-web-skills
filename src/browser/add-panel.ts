@@ -4,9 +4,9 @@ import type {
   PluginPeerChannel,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
-import { sanitizeName } from "../operations/matching.ts";
 import type { AddHandoffBox } from "./add-handoff.ts";
 import { addHandoffKey } from "./add-handoff.ts";
+import { sanitizeName } from "./sanitize-name.ts";
 import { refreshSkillList } from "./list.ts";
 
 type Template = ReturnType<HtmlTemplateTag>;
@@ -30,6 +30,8 @@ type AddState = {
   channel: PluginPeerChannel | null;
   pending: AbortController | null;
   reloadReminder: boolean;
+  /** A terminal result is on screen; a late channel close must not replace it. */
+  resultShown: boolean;
   /** Skill a Search handoff asked for; selected once the source resolves. */
   wantedSkill: string | null;
 };
@@ -60,6 +62,7 @@ export function createAddPanel(
         channel: null,
         pending: null,
         reloadReminder: false,
+        resultShown: false,
         wantedSkill: null,
       };
       states.set(key, state);
@@ -137,6 +140,7 @@ export function createAddPanel(
           if (installedNames.has(candidate.name)) candidate.existing = "managed";
         }
         state.reloadReminder = installed;
+        state.resultShown = true;
         if (installed) refreshSkillList(context);
         render();
         return;
@@ -155,6 +159,8 @@ export function createAddPanel(
       state.message = "Resolving the source…";
       state.candidates = [];
       state.selected.clear();
+      state.reloadReminder = false;
+      state.resultShown = false;
       closeChannel(state, "replaced");
       render();
 
@@ -186,6 +192,11 @@ export function createAddPanel(
           if (state.phase === "resolving") {
             fail("The add operation stopped. Resolve again to retry.");
             return;
+          }
+          if (!state.resultShown && state.phase !== "idle" && state.phase !== "error") {
+            state.phase = "error";
+            state.message =
+              "The add session closed before it finished. Resolve the source again to retry.";
           }
           render();
         });

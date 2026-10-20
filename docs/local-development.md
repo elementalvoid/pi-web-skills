@@ -53,20 +53,75 @@ export HOME=/tmp/pi-web-skills-home
 export PI_CODING_AGENT_DIR=/tmp/pi-web-skills-agent
 export PI_WEB_DATA_DIR=/tmp/pi-web-skills-data
 export PI_WEB_SESSIOND_SOCKET=/tmp/pi-web-skills-data/sessiond.sock
-export PI_WEB_PORT=8505
+export PI_WEB_PORT=8515   # a free port; never reuse the hosting instance's port
 
 mkdir -p "$PI_WEB_DATA_DIR/plugins" "$HOME"
 ln -s /data/home/projects/pi-web-skills "$PI_WEB_DATA_DIR/plugins/pi-web-skills"
 
 pi-web-sessiond &
 pi-web-server &
-# Open http://127.0.0.1:8505 and add a throwaway project/workspace.
+# Open http://127.0.0.1:8515 and add a throwaway project/workspace.
 ```
 
 - `HOME` isolates the plugin's `~/.agents/skills` and the global lock.
 - `PI_CODING_AGENT_DIR` isolates Pi auth, models, sessions, and packages.
 - The panel is workspace-hosted, so the test instance needs at least one project and workspace.
 - Restart only the test instance's session daemon when server code changes.
+- Never point `PI_WEB_DATA_DIR`, the socket, or the port at the hosting instance.
+- `npm run build` after starting the daemon leaves it on the old package revision; restart the
+  test daemon so the server revision and the browser bundle revision agree. A mismatched revision
+  withholds the browser entry.
+
+### Playwright smoke test
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH=/data/home/.cache/ms-playwright npm run test:e2e
+```
+
+- The command builds the package, starts its own isolated instance (temporary `HOME`,
+  `PI_CODING_AGENT_DIR`, `PI_WEB_DATA_DIR`, socket, and a free port), and removes every child
+  process, temporary directory, and plugin symlink on success and failure.
+- It seeds a throwaway git workspace and a local `file://` git source, then exercises the
+  machine-wide notice and paths, managed/unmanaged/broken/invalid rows, Add with an overwrite
+  confirmation, the dismissible `/reload` reminder, Remove, broken-entry cleanup, and Update's
+  confirmation and cancel. Search is not exercised because it needs skills.sh on the network.
+- The test makes no network calls outside `127.0.0.1` and the local git fixtures. It never
+  touches `/data/pi-web`, the hosting daemon, or the hosting port.
+- Playwright is pinned to `1.63.0`, which expects Chromium revision `1243` in the image cache.
+  If your cache has a different revision, install the matching browser with
+  `npx playwright install chromium` and use the Playwright version that reports it.
+- Chromium's system libraries must be present once per image:
+  `PLAYWRIGHT_BROWSERS_PATH=/data/home/.cache/ms-playwright npx playwright install-deps chromium`.
+  Do not run the browser test as part of `npm test`.
+
+### Manual UI checklist
+
+Use an isolated instance, not the hosting one.
+
+- [ ] Open a workspace and the **Skills** tab. The panel says it manages the whole machine, not
+  the workspace, and shows the resolved managed directory and lockfile paths.
+- [ ] If the directories are absent, the status says `missing`; after a successful Add it says
+  `exists` without a page reload.
+- [ ] Seed one managed, one unmanaged, one invalid-frontmatter, and one broken entry. The list
+  groups them as Managed, Unmanaged, and Broken; the invalid row is marked, not hidden.
+- [ ] Unmanaged rows have no Remove action and say the lockfile does not track them.
+- [ ] Add from a local `file://` git fixture. Resolve lists every skill; selecting one, several,
+  or all changes the Install count. Selecting a skill that already exists shows the overwrite
+  confirmation and writes nothing before **Overwrite and install**.
+- [ ] Cancel while Add is resolving or installing. The operation stops, temporary clones are
+  removed, and the panel says the operation stopped or was cancelled.
+- [ ] After a successful Add, the new row appears without a page reload, and a dismissible
+  `/reload` reminder is shown. Dismiss removes it.
+- [ ] **Update all** shows the confirmation that a remote change can overwrite a local edit.
+  **Cancel** returns to the idle state without opening a channel. A confirmed Update reports
+  updated, unchanged, skipped, deleted-upstream, and failed entries separately.
+- [ ] Remove asks first, then deletes the directory and lock entry and reminds you to `/reload`.
+  Removing a broken entry deletes only its stale lock entry and shows no `/reload` reminder.
+- [ ] `/reload` expectation: the panel does not reload sessions. Run `/reload` in each idle Pi
+  session; a new session sees installed skills without one.
+- [ ] Daemon-restart expectation: a browser-only change needs a page reload. A change to
+  `dist/server.js` or `package.json` metadata needs a restart of the isolated session daemon,
+  then a page reload. Restarting the hosting daemon is not part of this checklist.
 
 ## Restarting the hosting session daemon
 

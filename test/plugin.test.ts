@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import type { PluginActivationContext } from "@jmfederico/pi-web/plugin-api";
 import plugin from "../src/browser/index.ts";
@@ -43,4 +43,23 @@ test("package metadata declares the built dual entry with a narrow browser root"
   assert.equal(entry.serverModule, "dist/server.js");
   assert.equal(entry.machineSpecific, true);
   assert.ok(!String(entry.serverModule).startsWith(`${String(entry.browserRoot)}/`));
+});
+
+test("browser modules only import other modules inside the browser root", async () => {
+  const directory = new URL("../src/browser/", import.meta.url);
+  const names = (await readdir(directory)).filter((name) => name.endsWith(".ts"));
+  const offenders: string[] = [];
+  for (const name of names) {
+    const contents = await readFile(new URL(name, directory), "utf8");
+    for (const match of contents.matchAll(/^import\s+(?!type\s)[^;]*?from\s+"([^"]+)";/gmu)) {
+      const specifier = match[1] ?? "";
+      if (specifier.startsWith("./") || specifier.startsWith("../browser/")) continue;
+      offenders.push(`${name}: ${specifier}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "the host serves only browserRoot, so a runtime import outside it 404s in the browser",
+  );
 });
