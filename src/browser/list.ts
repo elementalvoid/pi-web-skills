@@ -188,21 +188,23 @@ function renderRow(
       : html``;
   return html`
     <li class="skills-row skills-row-${row.state}">
-      <div class="skills-row-header">
-        <span class="skills-row-title">${row.name}</span>
-        <span class="skills-chip skills-chip-${row.state}">${stateLabel}</span>
-        ${invalid}
-      </div>
-      ${row.description === ""
-        ? html``
-        : html`<p class="skills-description">${row.description}</p>`}
-      ${row.invalidReason === null
-        ? html``
-        : html`<p class="skills-warning" role="note">
-            Invalid frontmatter: ${row.invalidReason}
-          </p>`}
       <details class="skills-details">
-        <summary>Details &amp; actions</summary>
+        <summary>
+          <span class="skills-row-header">
+            <span class="skills-row-title">${row.name}</span>
+            <span class="skills-chip skills-chip-${row.state}">${stateLabel}</span>
+            ${invalid}
+          </span>
+          ${row.description === ""
+            ? html``
+            : html`<span class="skills-description">${row.description}</span>`}
+          ${row.invalidReason === null
+            ? html``
+            : html`<span class="skills-warning" role="note">
+                Invalid frontmatter: ${row.invalidReason}
+              </span>`}
+          <span class="skills-details-cta">Details &amp; actions</span>
+        </summary>
         <div class="skills-details-body">
           ${row.description === "" ? html`` : html`<p>${row.description}</p>`}
           ${row.folderName === null

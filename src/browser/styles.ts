@@ -325,6 +325,7 @@ export function renderSkillsStyles(
       color: var(--pi-text);
     }
     .skills-panel .skills-warning {
+      display: block;
       padding: 9px 11px;
       border: 1px solid var(--pi-border);
       border-left: 3px solid var(--pi-warning);
@@ -395,6 +396,23 @@ export function renderSkillsStyles(
       line-clamp: 2;
     }
     .skills-panel .skills-details > summary {
+      display: grid;
+      gap: 6px;
+      width: auto;
+      color: inherit;
+      cursor: pointer;
+      list-style: none;
+    }
+    .skills-panel .skills-details > summary::-webkit-details-marker {
+      display: none;
+    }
+    .skills-panel .skills-details > summary:hover .skills-row-title {
+      color: var(--pi-text-bright);
+    }
+    .skills-panel .skills-details > summary:hover .skills-details-cta {
+      color: var(--pi-text);
+    }
+    .skills-panel .skills-details-cta {
       display: inline-flex;
       align-items: center;
       gap: 5px;
@@ -402,20 +420,12 @@ export function renderSkillsStyles(
       color: var(--pi-text-secondary);
       font-size: 12px;
       font-weight: 500;
-      cursor: pointer;
-      list-style: none;
     }
-    .skills-panel .skills-details > summary:hover {
-      color: var(--pi-text);
-    }
-    .skills-panel .skills-details > summary::-webkit-details-marker {
-      display: none;
-    }
-    .skills-panel .skills-details > summary::before {
+    .skills-panel .skills-details-cta::before {
       content: "▸";
       transition: transform 0.15s ease;
     }
-    .skills-panel .skills-details[open] > summary::before {
+    .skills-panel .skills-details[open] .skills-details-cta::before {
       transform: rotate(90deg);
     }
     .skills-panel .skills-details-body {

@@ -148,10 +148,21 @@ try {
     "the install reload reminder is dismissible",
   );
 
-  // Remove the added skill through the row's confirmation.
+  // The whole compact row is the disclosure: name, description, and state pill
+  // each toggle the details, not just the "Details & actions" hint.
   const managed = page.getByRole("heading", { name: /^Managed skills/ }).locator("..");
+  const managedOne = managed.locator("li").filter({ hasText: "managed-one" });
+  await managedOne.locator(".skills-row-title").click();
+  assert.equal(await managedOne.locator("details[open]").count(), 1, "the name opens the row");
+  await managedOne.locator(".skills-description").click();
+  assert.equal(await managedOne.locator("details[open]").count(), 0, "the description closes it");
+  await managedOne.locator(".skills-chip-managed").click();
+  assert.equal(await managedOne.locator("details[open]").count(), 1, "the pill opens it");
+  await managedOne.locator(".skills-chip-managed").click();
+
+  // Remove the added skill through the row's confirmation.
   const notesRow = managed.locator("li").filter({ hasText: "notes" });
-  await notesRow.getByText("Details & actions", { exact: true }).click();
+  await notesRow.locator(".skills-row-title").click();
   await notesRow.getByRole("button", { name: "Remove", exact: true }).click();
   await page.getByText("Remove notes?", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Yes, remove", exact: true }).click();
@@ -166,7 +177,7 @@ try {
 
   // Broken cleanup deletes only the stale lock entry.
   const broken = page.getByRole("heading", { name: /^Broken entries/ }).locator("..");
-  await broken.getByText("Details & actions", { exact: true }).click();
+  await broken.locator(".skills-chip-broken").click();
   await broken.getByRole("button", { name: "Remove entry" }).click();
   await page.getByText("already missing", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Yes, remove entry" }).click();
