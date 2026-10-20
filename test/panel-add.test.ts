@@ -66,6 +66,8 @@ type Host = {
   readonly channelOptions: PluginPeerChannelOptions[];
   readonly channelOpen: (options: PluginPeerChannelOptions) => Promise<PluginPeerChannel>;
   readonly requests: string[];
+  renders?: number;
+  onRender?: () => void;
 };
 
 const listResponse: JsonValue = {
@@ -92,7 +94,12 @@ function panelContext(host: Host, machineId = "machine"): WorkspacePanelContext 
         return listResponse;
       },
     },
-    host: { requestRender: () => undefined },
+    host: {
+      requestRender: () => {
+        host.renders = (host.renders ?? 0) + 1;
+        host.onRender?.();
+      },
+    },
   } as unknown as WorkspacePanelContext;
 }
 
@@ -140,6 +147,25 @@ const candidate = {
   existing: "unmanaged",
 };
 
+test("typing a source asks the host to render so the Resolve button enables", () => {
+  const host: Host = {
+    channelOptions: [],
+    requests: [],
+    renders: 0,
+    channelOpen: async () => fakeChannel([], []),
+  };
+  const panel = createAddPanel(html) as unknown as (
+    context: WorkspacePanelContext,
+  ) => FakeTemplate;
+  const context = panelContext(host);
+
+  assert.equal(bindingBefore(panel(context), "?disabled", "Resolve"), true);
+  const renders = host.renders;
+  const typed = setSource(panel, context, "owner/repo");
+  assert.equal(host.renders, (renders ?? 0) + 1, "the host is asked to render on input");
+  assert.equal(bindingBefore(typed, "?disabled", "Resolve"), false, "Resolve enables after typing");
+});
+
 test("cancel aborts a channel open that has not resolved, then closes the late channel", async () => {
   const sent: JsonValue[] = [];
   const closeReasons: string[] = [];
@@ -157,8 +183,17 @@ test("cancel aborts a channel open that has not resolved, then closes the late c
     context: WorkspacePanelContext,
   ) => FakeTemplate;
   const context = panelContext(host);
+  const cancelSeen: boolean[] = [];
+  host.onRender = () => {
+    cancelSeen.push(textOf(panel(context)).includes("Cancel"));
+  };
 
   submit(setSource(panel, context, "owner/repo"));
+  assert.equal(
+    cancelSeen.at(-1),
+    true,
+    "the latest requested render offers Cancel while the open is pending",
+  );
   await tick();
 
   assert.equal(host.channelOptions.length, 1, "the open was requested");

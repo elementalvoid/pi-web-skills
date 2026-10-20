@@ -7,7 +7,7 @@ import type {
   PluginPeerChannelOptions,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
-import { createAddHandoff } from "../src/browser/add-handoff.ts";
+import { addHandoffKey, createAddHandoff } from "../src/browser/add-handoff.ts";
 import { createAddPanel } from "../src/browser/add-panel.ts";
 import { createSearchPanel } from "../src/browser/search-panel.ts";
 
@@ -67,6 +67,17 @@ function hasAlert(template: FakeTemplate): boolean {
   return collect(template).some((node) => node.strings.some((chunk) => chunk.includes('role="alert"')));
 }
 
+/** The disabled binding of the form's submit button. */
+function submitDisabled(template: FakeTemplate): unknown {
+  const node = collect(template).find((candidate) =>
+    candidate.strings.some((chunk) => chunk.includes('type="submit"')),
+  );
+  assert.ok(node !== undefined, "the search form has a submit button");
+  const index = node.strings.findIndex((chunk) => chunk.trimEnd().endsWith("?disabled="));
+  assert.ok(index >= 0, "the submit button has a disabled binding");
+  return node.values[index];
+}
+
 type Host = {
   readonly requests: { readonly operation: string; readonly input: JsonValue }[];
   readonly opens: { readonly operation: string; readonly input: JsonValue }[];
@@ -74,23 +85,30 @@ type Host = {
   channelOpen: (options: PluginPeerChannelOptions) => Promise<PluginPeerChannel>;
   readonly host: { requestRender: () => void };
   response: JsonValue;
+  renders: number;
 };
 
 function fakeHost(response: JsonValue): Host {
-  return {
+  const host: Host = {
     requests: [],
     opens: [],
     channelOptions: [],
     response,
+    renders: 0,
     channelOpen: async () => fakeChannel([], []),
-    host: { requestRender: () => undefined },
+    host: {
+      requestRender: () => {
+        host.renders += 1;
+      },
+    },
   };
+  return host;
 }
 
-function panelContext(host: Host): WorkspacePanelContext {
+function panelContext(host: Host, machineId = "machine", workspaceId = "workspace"): WorkspacePanelContext {
   return {
-    machine: { id: "machine", name: "Local", kind: "local" },
-    workspace: { id: "workspace", path: "/workspace", name: "workspace" },
+    machine: { id: machineId, name: "Local", kind: "local" },
+    workspace: { id: workspaceId, path: "/workspace", name: "workspace" },
     files: {},
     peer: {
       openChannel: (operation: string, input: JsonValue, options: PluginPeerChannelOptions) => {
@@ -176,6 +194,43 @@ const searchResults: JsonValue = {
   },
 };
 
+const alphaCandidate = {
+  name: "alpha",
+  description: "Alpha",
+  sourcePath: "skills/alpha/SKILL.md",
+  folderName: "alpha",
+  existing: "none",
+};
+
+/** Render the Add panel once so it consumes the pending handoff, then resolve it. */
+async function consumeHandoff(
+  addPanel: Panel,
+  context: WorkspacePanelContext,
+  handoff: ReturnType<typeof createAddHandoff>,
+): Promise<void> {
+  handoff.set(addHandoffKey(context), { source: "acme/tools", skillName: "alpha" });
+  addPanel(context);
+  await tick();
+}
+
+async function assertNextResolveSelectsNothing(
+  host: Host,
+  addPanel: Panel,
+  context: WorkspacePanelContext,
+): Promise<void> {
+  submit(addPanel(context));
+  await tick();
+  const onData = host.channelOptions[host.channelOptions.length - 1]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "candidates", candidates: [alphaCandidate] });
+  onData({ type: "candidates-end", total: 1 });
+  assert.equal(
+    bindingIn(addPanel(context), "alpha", "?checked"),
+    false,
+    "a stale handoff must not preselect a skill on the next manual resolve",
+  );
+}
+
 test("a search prompts for a keyword, shows progress, then rows with source and installs", async () => {
   const host = fakeHost(searchResults);
   const panel = createSearchPanel(html, createAddHandoff()) as unknown as Panel;
@@ -199,6 +254,18 @@ test("a search prompts for a keyword, shows progress, then rows with source and 
   assert.match(text, /1234 installs/);
   assert.match(text, /alpha/);
   assert.equal(hasAlert(ready), false);
+});
+
+test("typing a keyword asks the host to render so the Search button enables", () => {
+  const host = fakeHost(searchResults);
+  const panel = createSearchPanel(html, createAddHandoff()) as unknown as Panel;
+  const context = panelContext(host);
+
+  assert.equal(submitDisabled(panel(context)), true, "the button is disabled while the keyword is empty");
+  const renders = host.renders;
+  const typed = setInput(panel, context, "react");
+  assert.equal(host.renders, renders + 1, "the host is asked to render on input");
+  assert.equal(submitDisabled(typed), false, "the Search button enables after typing");
 });
 
 test("a failed search is an error banner but a cancelled one is not", async () => {
@@ -242,7 +309,10 @@ test("Add from a result prefills the Add source and preselects the matching skil
   clickIn(searchPanel(context), "Add notes");
 
   assert.deepEqual(host.opens, [], "the handoff starts nothing until the Add panel renders");
+  const renders = host.renders;
   const prefilled = addPanel(context);
+  assert.deepEqual(host.opens, [], "the render pass does not start the resolve");
+  assert.equal(host.renders, renders, "the render pass asks for no extra render");
   assert.equal(bindingBefore(prefilled, ".value"), "owner/repo", "the source is prefilled");
   await tick();
   assert.deepEqual(host.opens, [{ operation: "add", input: { source: "owner/repo" } }]);
@@ -301,6 +371,61 @@ test("Add from a result with no matching skill shows every candidate unselected"
   assert.deepEqual(sent, [], "search and the handoff never write");
 });
 
+test("a failed handoff resolve drops its preselection before the next manual resolve", async () => {
+  const host = fakeHost(searchResults);
+  host.channelOpen = async () => fakeChannel([], []);
+  const handoff = createAddHandoff();
+  const addPanel = createAddPanel(html, handoff) as unknown as Panel;
+  const context = panelContext(host);
+
+  await consumeHandoff(addPanel, context, handoff);
+  host.channelOptions[0]?.onData({ type: "error", error: { message: "The source could not be resolved." } });
+  assert.match(textOf(addPanel(context)), /could not be resolved/);
+
+  await assertNextResolveSelectsNothing(host, addPanel, context);
+});
+
+test("a cancelled handoff resolve drops its preselection before the next manual resolve", async () => {
+  const host = fakeHost(searchResults);
+  host.channelOpen = async () => fakeChannel([], []);
+  const handoff = createAddHandoff();
+  const addPanel = createAddPanel(html, handoff) as unknown as Panel;
+  const context = panelContext(host);
+
+  await consumeHandoff(addPanel, context, handoff);
+  click(addPanel(context), "Cancel");
+
+  await assertNextResolveSelectsNothing(host, addPanel, context);
+});
+
+test("a handoff stays in the machine and workspace that set it", async () => {
+  const host = fakeHost(searchResults);
+  host.channelOpen = async () => fakeChannel([], []);
+  const handoff = createAddHandoff();
+  const addPanel = createAddPanel(html, handoff) as unknown as Panel;
+  const searchPanel = createSearchPanel(html, handoff) as unknown as Panel;
+  const workspaceA = panelContext(host, "machine", "workspace-a");
+  const workspaceB = panelContext(host, "machine", "workspace-b");
+
+  submit(setInput(searchPanel, workspaceA, "react"));
+  await tick();
+  clickIn(searchPanel(workspaceA), "Add notes");
+
+  const other = addPanel(workspaceB);
+  assert.equal(bindingBefore(other, ".value"), "", "another workspace does not consume the handoff");
+  await tick();
+  assert.deepEqual(host.opens, [], "another workspace starts nothing");
+
+  const mine = addPanel(workspaceA);
+  assert.equal(bindingBefore(mine, ".value"), "owner/repo", "its own workspace consumes the handoff");
+  await tick();
+  assert.deepEqual(host.opens, [{ operation: "add", input: { source: "owner/repo" } }]);
+
+  addPanel(workspaceA);
+  await tick();
+  assert.equal(host.opens.length, 1, "a consumed handoff is cleared");
+});
+
 test("a handoff waits while the Add panel is resolving and then starts its own resolve", async () => {
   const host = fakeHost(searchResults);
   const handoff = createAddHandoff();
@@ -311,7 +436,7 @@ test("a handoff waits while the Add panel is resolving and then starts its own r
   await tick();
   assert.deepEqual(host.opens, [{ operation: "add", input: { source: "owner/repo" } }]);
 
-  handoff.pending = { source: "acme/tools", skillName: "alpha" };
+  handoff.set(addHandoffKey(context), { source: "acme/tools", skillName: "alpha" });
   const stillResolving = addPanel(context);
   assert.equal(bindingBefore(stillResolving, ".value"), "owner/repo", "the running resolve is kept");
   assert.equal(host.opens.length, 1, "the handoff does not cancel the running resolve");

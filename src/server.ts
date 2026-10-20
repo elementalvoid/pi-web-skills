@@ -142,5 +142,5 @@ function failure(code: string, message: string): PeerResponse {
 
 const hostFetch: FetchLike = async (url, init) => {
   const response = await fetch(url, { signal: init.signal });
-  return { ok: response.ok, status: response.status, json: () => response.json() };
+  return { status: response.status, json: () => response.json() };
 };

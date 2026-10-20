@@ -6,6 +6,7 @@ import type {
 } from "@jmfederico/pi-web/plugin-api";
 import { sanitizeName } from "../operations/matching.ts";
 import type { AddHandoffBox } from "./add-handoff.ts";
+import { addHandoffKey } from "./add-handoff.ts";
 import { refreshSkillList } from "./list.ts";
 
 type Template = ReturnType<HtmlTemplateTag>;
@@ -47,7 +48,7 @@ export function createAddPanel(
   const states = new Map<string, AddState>();
 
   const stateFor = (context: WorkspacePanelContext): AddState => {
-    const key = `${context.machine.id}\u0000${context.workspace.id}`;
+    const key = addHandoffKey(context);
     let state = states.get(key);
     if (state === undefined) {
       state = {
@@ -80,13 +81,20 @@ export function createAddPanel(
       channel?.close(reason);
     };
 
+    // A failed or cancelled resolve drops the handoff's wanted skill: the next
+    // manual resolve must not preselect a skill the failed handoff asked for.
+    const fail = (message: string) => {
+      state.phase = "error";
+      state.message = message;
+      state.wantedSkill = null;
+      render();
+    };
+
     const onFrame = (data: JsonValue) => {
       const frame = readFrame(data);
       if (frame === null) {
-        state.phase = "error";
-        state.message = "The server sent an invalid frame.";
         closeChannel(state, "invalid-frame");
-        render();
+        fail("The server sent an invalid frame.");
         return;
       }
       if (frame.type === "candidates") {
@@ -133,18 +141,14 @@ export function createAddPanel(
         render();
         return;
       }
-      state.phase = "error";
-      state.message = frame.message;
       closeChannel(state, "error");
-      render();
+      fail(frame.message);
     };
 
     const resolve = async () => {
       const source = state.source.trim();
       if (source === "") {
-        state.phase = "error";
-        state.message = "Enter a source to add.";
-        render();
+        fail("Enter a source to add.");
         return;
       }
       state.phase = "resolving";
@@ -156,13 +160,13 @@ export function createAddPanel(
 
       const peer = context.peer;
       if (peer?.openChannel === undefined) {
-        state.phase = "error";
-        state.message = "The Skills backend is unavailable on the selected machine.";
-        render();
+        fail("The Skills backend is unavailable on the selected machine.");
         return;
       }
       const pending = new AbortController();
       state.pending = pending;
+      // The view now offers Cancel for an open that has not resolved yet.
+      render();
       try {
         const channel = await peer.openChannel(
           "add",
@@ -180,17 +184,15 @@ export function createAddPanel(
           if (state.channel !== channel) return;
           state.channel = null;
           if (state.phase === "resolving") {
-            state.phase = "error";
-            state.message = "The add operation stopped. Resolve again to retry.";
+            fail("The add operation stopped. Resolve again to retry.");
+            return;
           }
           render();
         });
       } catch (error) {
         if (state.pending === pending) state.pending = null;
         if (pending.signal.aborted) return;
-        state.phase = "error";
-        state.message = error instanceof Error ? error.message : String(error);
-        render();
+        fail(error instanceof Error ? error.message : String(error));
       }
     };
 
@@ -202,6 +204,7 @@ export function createAddPanel(
         if (pending === null) return;
         state.phase = state.candidates.length === 0 ? "idle" : "candidates";
         state.message = "The add operation was cancelled.";
+        state.wantedSkill = null;
         render();
         return;
       }
@@ -209,6 +212,7 @@ export function createAddPanel(
       closeChannel(state, "cancelled");
       state.phase = state.candidates.length === 0 ? "idle" : "candidates";
       state.message = "The add operation was cancelled.";
+      state.wantedSkill = null;
       render();
     };
 
@@ -267,14 +271,18 @@ export function createAddPanel(
       render();
     };
 
-    const pendingHandoff = handoff?.pending ?? null;
-    // A Search handoff waits until the current resolve or install finishes, so
-    // it can never silently cancel running work.
-    if (pendingHandoff !== null && handoff !== undefined && !busy) {
-      handoff.pending = null;
-      state.source = pendingHandoff.source;
-      state.wantedSkill = pendingHandoff.skillName;
-      void resolve();
+    // A Search handoff waits while a resolve or install is busy, so it never
+    // cancels running work.
+    if (handoff !== undefined && !busy) {
+      const pendingHandoff = handoff.take(addHandoffKey(context));
+      if (pendingHandoff !== null) {
+        state.source = pendingHandoff.source;
+        state.wantedSkill = pendingHandoff.skillName;
+        // Kick off after this render returns, so resolve() cannot re-enter it.
+        queueMicrotask(() => {
+          void resolve();
+        });
+      }
     }
 
     return html`
@@ -297,7 +305,9 @@ export function createAddPanel(
               ?disabled=${busy}
               @input=${(event: Event) => {
                 const target = event.target as { value?: unknown } | null;
-                if (typeof target?.value === "string") state.source = target.value;
+                if (typeof target?.value !== "string") return;
+                state.source = target.value;
+                render();
               }}
             />
           </label>

@@ -1,5 +1,6 @@
 import type { HtmlTemplateTag, JsonValue, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import type { AddHandoffBox } from "./add-handoff.ts";
+import { addHandoffKey } from "./add-handoff.ts";
 import type { SearchResult } from "../operations/search.ts";
 
 type Template = ReturnType<HtmlTemplateTag>;
@@ -24,7 +25,7 @@ export function createSearchPanel(
   const states = new Map<string, SearchState>();
 
   const stateFor = (context: WorkspacePanelContext): SearchState => {
-    const key = `${context.machine.id}\u0000${context.workspace.id}`;
+    const key = addHandoffKey(context);
     let state = states.get(key);
     if (state === undefined) {
       state = { query: "", phase: "idle", results: [], message: "", sequence: 0 };
@@ -78,7 +79,7 @@ export function createSearchPanel(
     };
 
     const add = (result: SearchResult) => {
-      handoff.pending = { source: result.source, skillName: result.name };
+      handoff.set(addHandoffKey(context), { source: result.source, skillName: result.name });
       render();
     };
 
@@ -132,7 +133,9 @@ export function createSearchPanel(
               placeholder="react, testing, docs"
               @input=${(event: Event) => {
                 const target = event.target as { value?: unknown } | null;
-                if (typeof target?.value === "string") state.query = target.value;
+                if (typeof target?.value !== "string") return;
+                state.query = target.value;
+                render();
               }}
             />
           </label>

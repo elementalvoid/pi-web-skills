@@ -3,18 +3,20 @@ import type { JsonValue, Result } from "./errors.ts";
 import { operationError } from "./errors.ts";
 
 /** skills.sh base URL; tests override it with a local fake. */
-export const SEARCH_BASE_URL = "https://skills.sh";
+const SEARCH_BASE_URL = "https://skills.sh";
 
 /** Upstream requests 20 rows and the panel shows at most that many. */
-export const SEARCH_RESULT_LIMIT = 20;
+const SEARCH_RESULT_LIMIT = 20;
 
 /** Leaves headroom inside the host's ~10 s request bound. */
-export const SEARCH_TIMEOUT_MS = 8_000;
+const SEARCH_TIMEOUT_MS = 8_000;
 
 const QUERY_LIMIT = 200;
 const ID_LIMIT = 120;
 const NAME_LIMIT = 80;
 const SOURCE_LIMIT = 200;
+
+const TIMEOUT_MESSAGE = "The skills.sh search timed out. Retry in a moment.";
 
 /** One row of the skills.sh search response, sanitised and bounded. */
 export type SearchResult = {
@@ -28,7 +30,6 @@ export type SearchPayload = { readonly results: readonly SearchResult[] };
 
 /** The slice of `fetch` search needs, so a test supplies a local fake. */
 export type FetchResponse = {
-  readonly ok: boolean;
   readonly status: number;
   json(): Promise<unknown>;
 };
@@ -66,30 +67,31 @@ export async function searchSkills(
   if (context.signal.aborted) return cancelled();
 
   const timeout = AbortSignal.timeout(context.timeoutMs ?? SEARCH_TIMEOUT_MS);
+  const signal = AbortSignal.any([context.signal, timeout]);
   let response: FetchResponse;
   try {
     response = await context.fetch(searchUrl(context.baseUrl ?? SEARCH_BASE_URL, query), {
-      signal: AbortSignal.any([context.signal, timeout]),
+      signal,
     });
   } catch {
     if (context.signal.aborted) return cancelled();
     return unavailable(
       timeout.aborted
-        ? "The skills.sh search timed out. Retry in a moment."
+        ? TIMEOUT_MESSAGE
         : "The skills.sh search failed. Check the connection and retry.",
     );
   }
   if (context.signal.aborted) return cancelled();
-  if (!response.ok) {
+  if (response.status < 200 || response.status > 299) {
     return unavailable(`skills.sh answered ${String(response.status)}. Retry in a moment.`);
   }
 
   let body: unknown;
   try {
-    body = await response.json();
+    body = await readBody(response, signal);
   } catch {
     if (context.signal.aborted) return cancelled();
-    return invalidResponse();
+    return timeout.aborted ? unavailable(TIMEOUT_MESSAGE) : invalidResponse();
   }
   if (context.signal.aborted) return cancelled();
 
@@ -110,17 +112,44 @@ function readResult(value: unknown): SearchResult | null {
   const { id, name, source, installs } = value;
   if (typeof id !== "string" || typeof name !== "string" || typeof source !== "string") return null;
   if (typeof installs !== "number" || !Number.isFinite(installs)) return null;
-  return {
+  const result = {
     id: truncate(sanitizeMetadata(id), ID_LIMIT),
     name: truncate(sanitizeMetadata(name), NAME_LIMIT),
     source: truncate(sanitizeMetadata(source), SOURCE_LIMIT),
     installs,
   };
+  // An empty field would render a blank row and a handoff with no source.
+  if (result.id === "" || result.name === "" || result.source === "") return null;
+  return result;
 }
 
 function searchUrl(baseUrl: string, query: string): string {
   const params = new URLSearchParams({ q: query, limit: String(SEARCH_RESULT_LIMIT) });
   return `${baseUrl.replace(/\/+$/, "")}/api/search?${params.toString()}`;
+}
+
+/** Read the body under the request's signal, so a stalled body also times out. */
+function readBody(response: FetchResponse, signal: AbortSignal): Promise<unknown> {
+  return new Promise<unknown>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    const onAbort = () => {
+      reject(new Error("aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    response.json().then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 function truncate(value: string, limit: number): string {
