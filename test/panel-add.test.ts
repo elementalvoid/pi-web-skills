@@ -62,8 +62,6 @@ function bindingBefore(template: FakeTemplate, attribute: string, text?: string)
 }
 
 type Host = {
-  readonly renders: number;
-  readonly inputs: string[];
   readonly channelOptions: PluginPeerChannelOptions[];
   readonly channelOpen: (options: PluginPeerChannelOptions) => Promise<PluginPeerChannel>;
 };
@@ -133,8 +131,6 @@ test("cancel aborts a channel open that has not resolved, then closes the late c
   const channel = fakeChannel(sent, closeReasons);
   let resolveOpen: (channel: PluginPeerChannel) => void = () => undefined;
   const host: Host = {
-    renders: 0,
-    inputs: [],
     channelOptions: [],
     channelOpen: () =>
       new Promise<PluginPeerChannel>((resolve) => {
@@ -171,8 +167,6 @@ test("install stays disabled and the copy promises a confirmation before any ove
   const closeReasons: string[] = [];
   const channel = fakeChannel(sent, closeReasons);
   const host: Host = {
-    renders: 0,
-    inputs: [],
     channelOptions: [],
     channelOpen: async () => channel,
   };
