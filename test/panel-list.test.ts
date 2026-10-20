@@ -5,7 +5,7 @@ import type {
   JsonValue,
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
-import { renderSkillList } from "../src/browser/list.ts";
+import { refreshSkillList, renderSkillList } from "../src/browser/list.ts";
 
 type FakeTemplate = {
   readonly strings: readonly string[];
@@ -326,7 +326,9 @@ test("removing a broken entry sends its lock key and deletes only that entry", a
     server.calls.filter((call) => call.operation === "remove").map((call) => call.input),
     [{ names: ["gone"] }],
   );
-  assert.match(draw(context), /\/reload/);
+  const text = draw(context);
+  assert.match(text, /Removed the stale lock entry for gone/);
+  assert.doesNotMatch(text, /\/reload/, "no directory changed, so no reload is needed");
 });
 
 test("a refused removal shows the server's reason and does not refresh", async () => {
@@ -451,4 +453,185 @@ test("the list panel renders a malformed lock as a warning above the rows", asyn
 
   assert.match(draw(context), /Cannot read lock: not valid JSON/);
   assert.match(draw(context), /demo/);
+});
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+const emptyPayload = {
+  rows: [],
+  counts: { managed: 0, unmanaged: 0, broken: 0 },
+  lockWarning: null,
+};
+
+test("a refresh invalidates an in-flight list and an older response cannot overwrite the newer one", async () => {
+  const older = deferred<JsonValue>();
+  const newer = deferred<JsonValue>();
+  const responses = [older.promise, newer.promise];
+  let calls = 0;
+  const context = panelContext(
+    "refresh-race-machine",
+    () => {
+      const response = responses[calls];
+      calls += 1;
+      return response ?? Promise.reject(new Error("unexpected list request"));
+    },
+    () => undefined,
+  );
+
+  draw(context);
+  refreshSkillList(context);
+  draw(context);
+
+  assert.equal(calls, 2, "a refresh starts a new load even while the old one is in flight");
+  newer.resolve({ ok: true, value: emptyPayload });
+  await settle();
+  older.resolve({ ok: true, value: payload });
+  await settle();
+
+  const text = draw(context);
+  assert.match(text, /No skills found/);
+  assert.doesNotMatch(text, /demo/, "the older response must not replace the newer list");
+});
+
+test("a successful refresh clears the previous notice and stale row action", async () => {
+  let listCalls = 0;
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? { ok: true, value: payload }
+        : {
+            ok: true,
+            value: {
+              rows: payload.rows.filter((row) => row.state !== "managed"),
+              counts: { managed: 0, unmanaged: 2, broken: 1 },
+              lockWarning: null,
+            },
+          };
+    },
+    () => ({
+      ok: true,
+      value: { results: [{ name: "demo", ok: true, state: "managed", directory: "removed" }] },
+    }),
+  );
+  const context = panelContext("stale-state-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+  assert.match(draw(context), /Removed demo/);
+
+  refreshSkillList(context);
+  draw(context);
+  await settle();
+
+  const refreshed = draw(context);
+  assert.doesNotMatch(refreshed, /Removed demo/, "the old success notice is stale");
+  assert.doesNotMatch(refreshed, /Removing/, "the old row action is stale");
+});
+
+test("a second Remove confirmation click while one removal is in flight is ignored", async () => {
+  const removal = deferred<JsonValue>();
+  let removeCalls = 0;
+  const context = panelContext(
+    "double-click-machine",
+    (operation) => {
+      if (operation === "list") return Promise.resolve({ ok: true, value: payload });
+      removeCalls += 1;
+      return removal.promise;
+    },
+    () => undefined,
+  );
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  const confirm = handlerFor(render(context), "@click", "Yes, remove");
+  confirm();
+  confirm();
+  removal.resolve({
+    ok: true,
+    value: {
+      results: [
+        {
+          name: "demo",
+          ok: false,
+          directory: "removed",
+          error: {
+            code: "remove-failed",
+            message:
+              'Removed the directory for "demo" but could not update the lockfile; its entry remains.',
+          },
+        },
+      ],
+    },
+  });
+  await settle();
+
+  assert.equal(removeCalls, 1);
+});
+
+test("a lock failure after the directory removal refreshes to the broken row and shows a clear message", async () => {
+  let listCalls = 0;
+  const brokenDemo = {
+    ...payload.rows[0]!,
+    folderName: null,
+    description: "",
+    state: "broken",
+  };
+  const server = fakeServer(
+    () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? { ok: true, value: payload }
+        : {
+            ok: true,
+            value: {
+              rows: [brokenDemo, payload.rows[1]!, payload.rows[2]!, payload.rows[3]!],
+              counts: { managed: 0, unmanaged: 2, broken: 2 },
+              lockWarning: null,
+            },
+          };
+    },
+    () => ({
+      ok: true,
+      value: {
+        results: [
+          {
+            name: "demo",
+            ok: false,
+            directory: "removed",
+            error: {
+              code: "remove-failed",
+              message:
+                'Removed the directory for "demo" but could not update the lockfile; its entry remains.',
+            },
+          },
+        ],
+      },
+    }),
+  );
+  const context = panelContext("partial-remove-machine", server.request, () => undefined);
+  draw(context);
+  await settle();
+
+  click(render(context), "Remove");
+  click(render(context), "Yes, remove");
+  await settle();
+
+  const text = draw(context);
+  assert.equal(listCalls, 2, "the panel refreshes so the now-broken entry is shown");
+  assert.match(text, /could not update the lockfile/);
+  assert.match(text, /entry remains/);
+  assert.match(text, /Install directory is missing/);
+  assert.match(text, /\/reload/, "the directory changed, so the reminder still applies");
+  assert.doesNotMatch(text, /EACCES/);
 });

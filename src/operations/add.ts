@@ -288,7 +288,7 @@ async function discoverCandidates(
       : {
           ok: false,
           error: operationError(
-            "skill-not-found",
+            "not-found",
             `The source has no skill named ${JSON.stringify(filter)}.`,
           ),
         };

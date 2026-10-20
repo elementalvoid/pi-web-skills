@@ -19,7 +19,6 @@ export type OperationErrorCode =
   | "folder-hash-failed"
   | "discovery-failed"
   | "install-failed"
-  | "skill-not-found"
   | "not-found"
   | "not-managed"
   | "remove-failed";

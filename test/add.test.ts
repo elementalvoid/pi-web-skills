@@ -1319,3 +1319,32 @@ test("the copier refuses a destination outside the managed directory or through 
     assert.deepEqual(await readdir(outside), []);
   });
 });
+
+test("a source skill filter that matches nothing reports the shared not-found code", async () => {
+  await withHarness(async (harness) => {
+    const fixture = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const { exec } = createLocalExec((request) => {
+      const args = request.args ?? [];
+      if (args[0] !== "clone") return null;
+      return runProcess({
+        ...request,
+        args: args.map((argument) =>
+          argument === "https://github.com/owner/repo.git" ? fixture : argument,
+        ),
+      });
+    });
+    const { session, frames } = startAdd(harness, "owner/repo@missing", exec);
+
+    await session.settled;
+
+    assert.deepEqual(frames, [
+      {
+        type: "error",
+        error: { code: "not-found", message: 'The source has no skill named "missing".' },
+      },
+    ]);
+    await session.dispose();
+  });
+});

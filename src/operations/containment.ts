@@ -10,8 +10,16 @@ export function resolveManagedPath(managedDirectory: string, folderName: string)
   if (!isSingleSegment(folderName)) {
     return unsafePath(`${JSON.stringify(folderName)} is not a single path segment`);
   }
+  return resolveManagedSubpath(managedDirectory, folderName);
+}
+
+/** Resolve a relative path of safe segments inside the managed directory. */
+export function resolveManagedSubpath(managedDirectory: string, relativePath: string): PathCheck {
+  if (!isSafeRelativePath(relativePath)) {
+    return unsafePath(`${JSON.stringify(relativePath)} is not a safe relative path`);
+  }
   const root = resolve(managedDirectory);
-  const path = resolve(root, folderName);
+  const path = resolve(root, relativePath);
   if (!isStrictlyInside(root, path)) {
     return unsafePath(`${path} is outside ${root}`);
   }
@@ -30,26 +38,42 @@ export async function assertSafeSkillDirectory(
 ): Promise<PathCheck> {
   const lexical = resolveManagedPath(managedDirectory, folderName);
   if (!lexical.ok) return lexical;
+  return inspectSkillTarget(managedDirectory, lexical.value);
+}
 
+/**
+ * The same containment and symlink checks for a nested present directory; the
+ * relative path comes from discovery, so it is already under the managed root.
+ */
+export async function assertSafePresentDirectory(
+  managedDirectory: string,
+  relativePath: string,
+): Promise<PathCheck> {
+  const lexical = resolveManagedSubpath(managedDirectory, relativePath);
+  if (!lexical.ok) return lexical;
+  return inspectSkillTarget(managedDirectory, lexical.value);
+}
+
+async function inspectSkillTarget(managedDirectory: string, path: string): Promise<PathCheck> {
   let root: string;
   let target: string;
   try {
     root = await resolveRealPath(resolve(managedDirectory));
-    target = await resolveRealPath(lexical.value);
+    target = await resolveRealPath(path);
   } catch (error) {
-    return unsafePath(`Cannot resolve ${lexical.value}: ${String(error)}`);
+    return unsafePath(`Cannot resolve ${path}: ${String(error)}`);
   }
   if (!isStrictlyInside(root, target)) {
-    return unsafePath(`${lexical.value} resolves to ${target}, outside ${root}`);
+    return unsafePath(`${path} resolves to ${target}, outside ${root}`);
   }
 
   try {
-    if ((await lstat(lexical.value)).isSymbolicLink()) {
-      return unsafePath(`${lexical.value} is a symlink`);
+    if ((await lstat(path)).isSymbolicLink()) {
+      return unsafePath(`${path} is a symlink`);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      return unsafePath(`Cannot inspect ${lexical.value}: ${String(error)}`);
+      return unsafePath(`Cannot inspect ${path}: ${String(error)}`);
     }
   }
   return { ok: true, value: target };
@@ -103,6 +127,16 @@ function isSingleSegment(folderName: string): boolean {
     !folderName.includes("/") &&
     !folderName.includes("\\") &&
     !folderName.includes("\0")
+  );
+}
+
+function isSafeRelativePath(relativePath: string): boolean {
+  return (
+    relativePath !== "" &&
+    !isAbsolute(relativePath) &&
+    !relativePath.includes("\\") &&
+    !relativePath.includes("\0") &&
+    relativePath.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..")
   );
 }
 

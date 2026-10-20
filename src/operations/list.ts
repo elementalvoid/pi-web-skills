@@ -56,6 +56,13 @@ type PresentSkill = {
   readonly invalidReason: string | null;
 };
 
+/** One directory containing a SKILL.md, with the path relative to the managed root. */
+export type PresentSkillDirectory = {
+  readonly folderName: string;
+  readonly relativePath: string;
+  readonly directory: string;
+};
+
 type Frontmatter = {
   readonly name: string | null;
   readonly description: string | null;
@@ -158,11 +165,28 @@ function compareRows(left: ListRow, right: ListRow): number {
 }
 
 async function discoverPresentSkills(managedDirectory: string): Promise<PresentSkill[]> {
+  const directories = await discoverSkillDirectories(managedDirectory);
   const found: PresentSkill[] = [];
-  await walk(managedDirectory, 0);
+  for (const directory of directories) {
+    const frontmatter = await readFrontmatter(join(directory.directory, "SKILL.md"));
+    found.push({ folderName: directory.folderName, ...frontmatter });
+  }
+  return found;
+}
+
+/**
+ * Every directory holding a regular SKILL.md, bounded to five levels and
+ * skipping noise directories. Remove reuses this so it resolves the same
+ * present folders List shows, including nested ones.
+ */
+export async function discoverSkillDirectories(
+  managedDirectory: string,
+): Promise<PresentSkillDirectory[]> {
+  const found: PresentSkillDirectory[] = [];
+  await walk(managedDirectory, 0, []);
   return found;
 
-  async function walk(directory: string, depth: number): Promise<void> {
+  async function walk(directory: string, depth: number, segments: readonly string[]): Promise<void> {
     if (depth > MAX_DEPTH) return;
     let entries: Dirent[];
     try {
@@ -171,12 +195,15 @@ async function discoverPresentSkills(managedDirectory: string): Promise<PresentS
       return;
     }
     if (depth > 0 && entries.some((entry) => entry.name === "SKILL.md" && entry.isFile())) {
-      const frontmatter = await readFrontmatter(join(directory, "SKILL.md"));
-      found.push({ folderName: basename(directory), ...frontmatter });
+      found.push({
+        folderName: basename(directory),
+        relativePath: segments.join("/"),
+        directory,
+      });
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) continue;
-      await walk(join(directory, entry.name), depth + 1);
+      await walk(join(directory, entry.name), depth + 1, [...segments, entry.name]);
     }
   }
 }

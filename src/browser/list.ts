@@ -23,9 +23,23 @@ type RowAction =
 
 // Machine-wide state, keyed by machine: every workspace on a machine shares it.
 const lists = new Map<string, ListState>();
-const inFlight = new Set<string>();
+const generations = new Map<string, number>();
 const rowActions = new Map<string, RowAction>();
 const notices = new Map<string, string>();
+
+/** Every load takes a new generation so only the newest response may write state. */
+function nextGeneration(key: string): number {
+  const next = (generations.get(key) ?? 0) + 1;
+  generations.set(key, next);
+  return next;
+}
+
+function clearRowActions(key: string): void {
+  const prefix = `${key}\u0000`;
+  for (const actionKey of rowActions.keys()) {
+    if (actionKey.startsWith(prefix)) rowActions.delete(actionKey);
+  }
+}
 
 /** List section: managed, unmanaged, broken, and invalid rows, with Remove actions. */
 export function renderSkillList(
@@ -48,7 +62,12 @@ export function renderSkillList(
 
 /** Forget the cached list so the next render re-reads the machine after a mutation. */
 export function refreshSkillList(context: WorkspacePanelContext): void {
-  lists.delete(context.machine.id);
+  const key = context.machine.id;
+  lists.delete(key);
+  notices.delete(key);
+  clearRowActions(key);
+  // Invalidate any response already in flight; the next render loads a new one.
+  nextGeneration(key);
   context.host.requestRender();
 }
 
@@ -198,6 +217,8 @@ async function confirmRemove(
   row: ListRow,
   key: string,
 ): Promise<void> {
+  // A second click on the old template while the first request runs is ignored.
+  if (rowActions.get(key)?.kind === "removing") return;
   rowActions.set(key, { kind: "removing" });
   context.host.requestRender();
   try {
@@ -208,67 +229,112 @@ async function confirmRemove(
     // entry, and a broken row has no folder, so its lock key is the identity.
     const identity = row.folderName ?? row.name;
     const response = await context.peer.request("remove", { names: [identity] });
-    const refusal = readRemovalRefusal(response);
-    if (refusal !== null) throw new Error(refusal);
+    const results = readRemovalResults(response);
+    const removedDirectory = results.some((result) => result.directory === "removed");
+    const failed = results.filter((result) => !result.ok);
+    if (failed.length > 0 && !removedDirectory) {
+      rowActions.set(key, { kind: "error", message: removalFailure(failed) });
+      context.host.requestRender();
+      return;
+    }
+
+    const notice = removalNotice(row, results);
+    // A successful read clears the old notice and row action; set the new one after.
+    await loadList(context, context.machine.id);
     rowActions.delete(key);
-    const reminder = "Run /reload in each session to apply the change.";
-    notices.set(
-      context.machine.id,
-      row.state === "broken"
-        ? `Removed the stale lock entry for ${row.name}. ${reminder}`
-        : `Removed ${row.name}. ${reminder}`,
-    );
-    await loadList(context, context.machine.id, true);
+    notices.set(context.machine.id, notice);
+    context.host.requestRender();
   } catch (error) {
     rowActions.set(key, { kind: "error", message: describe(error) });
     context.host.requestRender();
   }
 }
 
-/** A per-name refusal or a rejected request as a message; null means the removal succeeded. */
-function readRemovalRefusal(response: JsonValue): string | null {
-  if (!isRecord(response)) return "The server returned an invalid removal.";
+/** One per-name outcome the panel can render; a rejected request instead throws. */
+type RemovalResultView = {
+  readonly name: string;
+  readonly ok: boolean;
+  readonly directory: "removed" | "absent" | null;
+  readonly message: string | null;
+};
+
+function readRemovalResults(response: JsonValue): readonly RemovalResultView[] {
+  if (!isRecord(response)) throw new Error("The server returned an invalid removal.");
   if (response["ok"] !== true) {
     const error = response["error"];
-    return isRecord(error) && typeof error["message"] === "string"
-      ? error["message"]
-      : "The server rejected the removal.";
+    throw new Error(
+      isRecord(error) && typeof error["message"] === "string"
+        ? error["message"]
+        : "The server rejected the removal.",
+    );
   }
   const value = response["value"];
   if (!isRecord(value) || !Array.isArray(value["results"])) {
-    return "The server returned an invalid removal.";
+    throw new Error("The server returned an invalid removal.");
   }
-  for (const result of value["results"]) {
-    if (!isRecord(result)) return "The server returned an invalid removal.";
-    if (result["ok"] === true) continue;
+  return value["results"].map((result): RemovalResultView => {
+    if (!isRecord(result)) throw new Error("The server returned an invalid removal.");
+    const name = result["name"];
+    const ok = result["ok"];
+    if (typeof name !== "string" || typeof ok !== "boolean") {
+      throw new Error("The server returned an invalid removal.");
+    }
+    const directory = result["directory"];
     const error = result["error"];
-    return isRecord(error) && typeof error["message"] === "string"
-      ? error["message"]
-      : "The removal failed.";
-  }
-  return null;
+    return {
+      name,
+      ok,
+      directory: directory === "removed" || directory === "absent" ? directory : null,
+      message:
+        ok || !isRecord(error) || typeof error["message"] !== "string"
+          ? null
+          : error["message"],
+    };
+  });
 }
 
-/** `force` bypasses the in-flight guard so a mutation's refresh always re-reads. */
-async function loadList(
-  context: WorkspacePanelContext,
-  key: string,
-  force = false,
-): Promise<void> {
-  if (!force && inFlight.has(key)) return;
-  inFlight.add(key);
+function removalFailure(failed: readonly RemovalResultView[]): string {
+  return failed.map((result) => result.message ?? `Removal of ${result.name} failed.`).join(" ");
+}
+
+/** The success or partial-failure notice; /reload only matters when a directory changed. */
+function removalNotice(row: ListRow, results: readonly RemovalResultView[]): string {
+  const parts: string[] = [];
+  const succeeded = results.filter((result) => result.ok);
+  const failed = results.filter((result) => !result.ok);
+  if (succeeded.length > 0) {
+    parts.push(
+      row.state === "broken"
+        ? `Removed the stale lock entry for ${row.name}.`
+        : `Removed ${succeeded.map((result) => result.name).join(", ")}.`,
+    );
+  }
+  if (failed.length > 0) parts.push(removalFailure(failed));
+  if (results.some((result) => result.directory === "removed")) {
+    parts.push("Run /reload in each session to apply the change.");
+  }
+  return parts.join(" ");
+}
+
+/** Load the list for `key`; only the newest load may write state, notices, or actions. */
+async function loadList(context: WorkspacePanelContext, key: string): Promise<void> {
+  const generation = nextGeneration(key);
   try {
     if (context.peer?.request === undefined) throw new Error("The package peer is unavailable");
     const response = await context.peer.request("list", null);
-    lists.set(key, { kind: "ready", list: readListPayload(response) });
+    const list = readListPayload(response);
+    if (generations.get(key) !== generation) return;
+    lists.set(key, { kind: "ready", list });
+    notices.delete(key);
+    clearRowActions(key);
   } catch (error) {
+    if (generations.get(key) !== generation) return;
     lists.set(key, {
       kind: "error",
       message: error instanceof Error ? error.message : String(error),
     });
   } finally {
-    inFlight.delete(key);
-    context.host.requestRender();
+    if (generations.get(key) === generation) context.host.requestRender();
   }
 }
 

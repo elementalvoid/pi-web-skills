@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import test from "node:test";
+import { mutateLockfile } from "../src/operations/lockfile.ts";
 import { removeSkills } from "../src/operations/remove.ts";
 import type { SkillPaths } from "../src/operations/paths.ts";
 import { resolveSkillPaths } from "../src/operations/paths.ts";
@@ -198,7 +199,7 @@ test("a missing managed directory still removes the entry and reports it was abs
   });
 });
 
-test("a symlinked skill directory is refused as unsafe-path and its target survives", async () => {
+test("a broken entry whose folder name is a symlink only removes the entry, never the link", async () => {
   await withTemporaryHome(async ({ home, paths }) => {
     const outside = join(home, "outside");
     await mkdir(outside);
@@ -209,12 +210,104 @@ test("a symlinked skill directory is refused as unsafe-path and its target survi
 
     const result = await removeSkills({ paths, signal }, ["linked"]);
 
-    assert.equal(result.ok, true);
-    const outcome = result.ok ? result.value.results[0] : null;
-    assert.equal(outcome?.ok, false);
-    assert.equal(outcome?.ok === false && outcome.error.code, "unsafe-path");
+    assert.deepEqual(result, {
+      ok: true,
+      value: {
+        results: [{ name: "linked", ok: true, state: "broken", directory: "absent" }],
+      },
+    });
     assert.equal(await readFile(join(outside, "precious.txt"), "utf8"), "keep me");
-    assert.deepEqual(lockKeys(await readLockFile(paths)), ["linked"]);
+    assert.equal((await lstat(join(paths.managedDirectory, "linked"))).isSymbolicLink(), true);
+    assert.deepEqual(lockKeys(await readLockFile(paths)), []);
+  });
+});
+
+test("a nested unmanaged directory is not-managed, the same way List finds it", async () => {
+  await withTemporaryHome(async ({ home, paths }) => {
+    await writeSkill(paths.managedDirectory, join("nested", "handmade"));
+    await writeLockFile(paths, { version: 3, skills: {} });
+    const before = await snapshotTree(home);
+
+    const result = await removeSkills({ paths, signal }, ["handmade"]);
+
+    assert.deepEqual(result.ok && result.value.results, [
+      {
+        name: "handmade",
+        ok: false,
+        error: {
+          code: "not-managed",
+          message:
+            '"handmade" is not tracked by the lockfile; unmanaged skills are never removed.',
+        },
+      },
+    ]);
+    assert.deepEqual(await snapshotTree(home), before);
+  });
+});
+
+test("a nested managed skill removes the discovered directory, not a top-level guess", async () => {
+  await withTemporaryHome(async ({ paths }) => {
+    await writeSkill(paths.managedDirectory, join("nested", "demo"));
+    await writeSkill(paths.managedDirectory, "notes");
+    await writeLockFile(paths, {
+      version: 3,
+      skills: { demo: entry("demo"), notes: entry("notes") },
+    });
+
+    const result = await removeSkills({ paths, signal }, ["demo"]);
+
+    assert.deepEqual(result, {
+      ok: true,
+      value: {
+        results: [{ name: "demo", ok: true, state: "managed", directory: "removed" }],
+      },
+    });
+    assert.equal(await exists(join(paths.managedDirectory, "nested", "demo")), false);
+    assert.equal(await exists(join(paths.managedDirectory, "notes")), true);
+    assert.deepEqual(lockKeys(await readLockFile(paths)), ["notes"]);
+  });
+});
+
+test("a failed lock write after the directory removal is a per-name result and later names still run", async () => {
+  await withTemporaryHome(async ({ paths }) => {
+    await writeSkill(paths.managedDirectory, "demo");
+    await writeSkill(paths.managedDirectory, "notes");
+    await writeLockFile(paths, {
+      version: 3,
+      skills: { demo: entry("demo"), notes: entry("notes") },
+    });
+    let writes = 0;
+    const mutateLock: typeof mutateLockfile = async (path, mutate) => {
+      writes += 1;
+      if (writes === 1) {
+        throw Object.assign(new Error("EACCES: permission denied, rename '/lock.tmp'"), {
+          code: "EACCES",
+        });
+      }
+      return mutateLockfile(path, mutate);
+    };
+
+    const result = await removeSkills({ paths, signal, mutateLock }, ["demo", "notes"]);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.ok && result.value.results, [
+      {
+        name: "demo",
+        ok: false,
+        directory: "removed",
+        error: {
+          code: "remove-failed",
+          message:
+            'Removed the directory for "demo" but could not update the lockfile; its entry remains.',
+          details: { reason: "EACCES: permission denied, rename '/lock.tmp'" },
+        },
+      },
+      { name: "notes", ok: true, state: "managed", directory: "removed" },
+    ]);
+    assert.equal(await exists(join(paths.managedDirectory, "demo")), false);
+    assert.equal(await exists(join(paths.managedDirectory, "notes")), false);
+    // The failed entry remains, which is what makes the refreshed row broken.
+    assert.deepEqual(lockKeys(await readLockFile(paths)), ["demo"]);
   });
 });
 
