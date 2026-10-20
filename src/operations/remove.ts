@@ -117,6 +117,9 @@ async function removeOne(
   // Only a real present skill directory is deleted. A lock key with no present
   // skill is broken; a symlink with that name is not a present skill, so its
   // entry is cleaned up and the link is never followed or deleted.
+  // shortcut: two nested folders with the same basename resolve to the first one
+  // discovery returns, matching List's one-entry-per-folder rule; add path identity
+  // if same-named nested installs become real.
   const folder =
     match.folderName === null
       ? null
