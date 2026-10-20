@@ -81,7 +81,34 @@ docker restart <sessiond-container>
 
 This interrupts every active session and terminal, including the agent run that requested the restart. The web container stays up; reload the page after the daemon returns. The compose service uses `restart: unless-stopped`, so the container returns after a process exit as well.
 
-Killing PID 1 or the `pi-web-sessiond` process from inside the container also restarts it via that policy, but it ends the current run immediately and its output is lost. Prefer the host command.
+Killing the daemon from inside the container also restarts it via that policy, but it ends the current run immediately and its output is lost. Prefer the host command.
+
+### From inside the container (ends the current turn)
+
+Find the daemon and confirm which state it owns:
+
+```sh
+ps -eo pid,ppid,args | grep '[p]i-web-sessiond'
+tr '\0' '\n' < /proc/<pid>/environ | grep -E '^PI_WEB_(DATA_DIR|SESSIOND_SOCKET)='
+```
+
+The production daemon owns `/data/pi-web`. Then:
+
+```sh
+kill -TERM <pid>   # graceful: sessiond flushes state, tini forwards and exits
+kill -KILL <pid>   # forced; only if TERM does not exit within a few seconds
+```
+
+The shell that runs the command is a child of sessiond, so it dies with it: the command does not return, and the current turn's output is lost. Tini exits when its child exits, and `restart: unless-stopped` starts the container again.
+
+Do not use `kill -KILL 1`. PID 1 in a container receives only signals it handles, and tini does not handle `SIGKILL`. Kill the sessiond child (PID 7 today); tini exits when that child exits. From the host, `docker kill -s KILL <sessiond-container>` is the forced equivalent.
+
+### Before using it on the hosting daemon
+
+1. Prove the plugin change on an isolated test daemon: kill it, restart it, and confirm the new plugin revision loads. A test daemon started from a shell is not managed by Docker, so this proves the signal path and reload, not the container restart policy.
+2. On the host, confirm `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' <sessiond-container>` returns `unless-stopped`.
+3. Keep a host shell available as a fallback: `docker start <sessiond-container>`, or the TrueNAS app Start action.
+4. Accept that every active session and terminal ends, including the run that issued the kill.
 
 To schedule a restart after this run has finished, run this on the host (systemd):
 
