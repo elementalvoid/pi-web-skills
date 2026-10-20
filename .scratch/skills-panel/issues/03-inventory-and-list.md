@@ -42,3 +42,18 @@
 
 - `PeerResponse` is still declared in `src/server.ts` because the repo has no separate protocol module; the added lines are the import, the widened union, and the `list` branch.
 - Two present skills cannot claim the same lock entry twice; the first row in discovery order wins the entry and the second stays unmanaged. No ticket path depends on that ambiguity.
+
+## Review fixes
+
+Review fixes on `ticket/03-fix`, after merging `integration/skills-panel`:
+
+- Non-object YAML frontmatter (a scalar or a list) now marks the row invalid with `frontmatter is not an object` instead of throwing on the `in` check; valid sibling skills still list.
+- Row descriptions are sanitised with the vendored `sanitizeMetadata` and capped at 500 characters, matching the add candidate cap.
+- One lock entry marks at most one present folder managed: the first match consumes the entry, and a later folder with the same name stays unmanaged.
+- `findLockKey` is one explicit three-step lookup: exact key, sanitised key, then sanitised folder name.
+- The local discovery walk and skip constant carry a comment explaining that vendored discovery is not reused because its parser drops invalid skills.
+- Managed-row source, ref, and updated time were already rendered at `72ae6d4`; a panel test now pins that display.
+- Tests added: non-object scalar/array frontmatter alongside a valid skill, sanitised and capped description, one-entry-only matching, and managed-row metadata.
+- `npm run build`, `npm run typecheck`, and `npm test` pass (105/105).
+
+No review findings remain.
