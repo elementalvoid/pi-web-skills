@@ -23,7 +23,10 @@ export type OperationErrorCode =
   | "not-found"
   | "not-managed"
   | "remove-failed"
-  | "update-failed";
+  | "update-failed"
+  | "search-unavailable"
+  | "search-invalid-response"
+  | "cancelled";
 
 export type OperationError = {
   readonly code: OperationErrorCode;
