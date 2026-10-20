@@ -108,7 +108,7 @@ Unmanaged skills are read-only for Update and Remove. Add may replace an existin
 
 Requests:
 
-- `status` → resolved paths, existence flags, plugin version, and whether the lock is readable.
+- `status` → resolved paths, existence flags, and whether the lock is readable.
 - `list` → the read model described below.
 - `remove` → `{ names: string[] }` → per-name outcome.
 - `search` → `{ query: string }` → sanitised results from skills.sh.
