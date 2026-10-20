@@ -68,6 +68,29 @@ pi-web-server &
 - The panel is workspace-hosted, so the test instance needs at least one project and workspace.
 - Restart only the test instance's session daemon when server code changes.
 
+## Restarting the hosting session daemon
+
+There is no in-process reload. The daemon handles `SIGTERM`, but server plugins are imported once per daemon start; `/reload` and a web/API restart do not load new server plugin code. `pi-web restart` is not usable in this image: it manages systemd/launchd user services and reports "not installed".
+
+From the TrueNAS host:
+
+```sh
+docker ps --format '{{.ID}}\t{{.Names}}\t{{.Command}}' | grep pi-web-sessiond
+docker restart <sessiond-container>
+```
+
+This interrupts every active session and terminal, including the agent run that requested the restart. The web container stays up; reload the page after the daemon returns. The compose service uses `restart: unless-stopped`, so the container returns after a process exit as well.
+
+Killing PID 1 or the `pi-web-sessiond` process from inside the container also restarts it via that policy, but it ends the current run immediately and its output is lost. Prefer the host command.
+
+To schedule a restart after this run has finished, run this on the host (systemd):
+
+```sh
+systemd-run --on-active=60 --unit=pi-web-sessiond-restart docker restart <sessiond-container>
+```
+
+For plugin iteration, do not restart the hosting daemon at all. Use the isolated test instance above and restart only that daemon.
+
 ## Unit tests first
 
 Most behavior is filesystem and git work. Test the operation layer directly with a temporary `HOME` and local git repositories; no PI WEB instance is needed. Reserve end-to-end tests for panel and peer wiring.
