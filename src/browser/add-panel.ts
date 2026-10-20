@@ -216,7 +216,10 @@ export function createAddPanel(html: HtmlTemplateTag): (context: WorkspacePanelC
       }
       state.phase = "installing";
       state.message = `Starting install of ${String(selected.length)} skill${selected.length === 1 ? "" : "s"}…`;
-      channel.send({ type: "install", names: selected.map((candidate) => candidate.name) });
+      channel.send({
+        type: "install",
+        sourcePaths: selected.map((candidate) => candidate.sourcePath),
+      });
       render();
     };
 

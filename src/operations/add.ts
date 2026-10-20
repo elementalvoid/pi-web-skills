@@ -38,13 +38,15 @@ export type AddCandidate = {
   readonly existing: "none" | "managed" | "unmanaged";
 };
 
-/** A skill that install can copy; the source path and folder name are uncapped. */
+/** A skill that install can copy; the source path is the selection identity. */
 type InstallableCandidate = {
   readonly name: string;
+  readonly sourcePath: string;
   readonly folderName: string;
   readonly folderHash: string;
   readonly skillPath: string;
   readonly directory: string;
+  readonly pluginName?: string;
 };
 
 export type AddFailure = { readonly name: string; readonly message: string };
@@ -77,6 +79,8 @@ export type AddContext = OperationContext & {
   readonly source: string;
   readonly exec: ExecFile;
   readonly tempRoot: string;
+  /** Replaces the atomic lock mutation; a test uses it to fail the write after the swap. */
+  readonly mutateLock?: typeof mutateLockfile;
 };
 
 /**
@@ -86,7 +90,7 @@ export type AddContext = OperationContext & {
 export type AddSession = {
   readonly start: () => void;
   readonly settled: Promise<void>;
-  readonly install: (names: readonly string[]) => void;
+  readonly install: (sourcePaths: readonly string[]) => void;
   readonly cancel: () => void;
   readonly dispose: () => Promise<void>;
   readonly cloneDirectory: () => string | null;
@@ -182,16 +186,16 @@ export function createAddSession(
       runPromise = run().finally(() => settle());
     },
     settled,
-    install(names) {
+    install(sourcePaths) {
       if (signal.aborted) return;
-      if (!Array.isArray(names) || names.some((name) => typeof name !== "string")) {
+      if (!Array.isArray(sourcePaths) || sourcePaths.some((value) => typeof value !== "string")) {
         emit({
           type: "error",
-          error: operationError("invalid-input", "install takes a list of skill names."),
+          error: operationError("invalid-input", "install takes a list of skill source paths."),
         });
         return;
       }
-      if (names.length === 0) {
+      if (sourcePaths.length === 0) {
         emit({
           type: "error",
           error: operationError("invalid-input", "Select at least one skill to install."),
@@ -214,7 +218,25 @@ export function createAddSession(
         return;
       }
       installing = true;
-      installPromise = runInstall(context, signal, resolved, names, emit).finally(() => {
+      const result: InstallResult = { installed: [], replaced: [], failed: [] };
+      installPromise = (async () => {
+        let finished = false;
+        try {
+          finished = await runInstall(context, signal, resolved, sourcePaths, emit, result);
+        } catch (error) {
+          // A throw must still end the session with a result the panel can show.
+          result.failed.push({ name: "install", message: describe(error) });
+          finished = true;
+        }
+        if (finished) {
+          emit({
+            type: "done",
+            installed: result.installed,
+            replaced: result.replaced,
+            failed: result.failed,
+          });
+        }
+      })().finally(() => {
         installing = false;
       });
     },
@@ -293,67 +315,65 @@ async function discoverCandidates(
     // without a present folder is a broken entry, not a target this replaces.
     const target = resolveInstallTarget(skill.name, { lockKeys, folderNames });
     const skillPath = relativeFolder === "" ? "SKILL.md" : `${relativeFolder}/SKILL.md`;
+    const sourcePath = candidateText(skillPath, SOURCE_PATH_LIMIT);
     candidates.push({
       name: candidateText(skill.name, NAME_LIMIT),
       description: candidateText(skill.description, DESCRIPTION_LIMIT),
-      sourcePath: candidateText(skillPath, SOURCE_PATH_LIMIT),
+      sourcePath,
       folderName: candidateText(target.folderName, NAME_LIMIT),
       folderHash: hashed.value,
       existing: target.existing,
     });
     installable.push({
       name: skill.name,
+      sourcePath,
       folderName: target.folderName,
       folderHash: hashed.value,
       skillPath,
       directory: skill.path,
+      pluginName: skill.pluginName,
     });
   }
   return { ok: true, value: { candidates, installable } };
 }
 
+type InstallResult = {
+  readonly installed: string[];
+  readonly replaced: string[];
+  readonly failed: AddFailure[];
+};
+
 /**
- * Install the selected skills on the session signal. Each skill is copied, then
- * recorded, so an earlier success survives a later failure. Reading the lock and
- * the managed directory again keeps the destination rule current.
+ * Install the selected skills on the session signal. Each skill is copied and
+ * recorded before the next one, so an earlier success survives a later failure.
+ * Returns true when the caller should emit the terminal done frame; a false
+ * return means an error frame was already emitted. Reading the lock and the
+ * managed directory again keeps the destination rule current.
  */
 async function runInstall(
   context: AddContext,
   signal: AbortSignal,
   resolved: { readonly parsed: ParsedSource; readonly installable: readonly InstallableCandidate[] },
-  names: readonly string[],
+  sourcePaths: readonly string[],
   emit: (frame: AddFrame) => void,
-): Promise<void> {
-  const failed: AddFailure[] = [];
+  result: InstallResult,
+): Promise<boolean> {
+  const { failed } = result;
   const selected: InstallableCandidate[] = [];
-  for (const name of names) {
-    const candidate = resolved.installable.find((item) => item.name === name);
+  for (const sourcePath of sourcePaths) {
+    const candidate = resolved.installable.find((item) => item.sourcePath === sourcePath);
     if (candidate === undefined) {
-      failed.push({ name, message: "The resolved source provides no skill with this name." });
+      failed.push({ name: sourcePath, message: "The resolved source provides no skill at this path." });
     } else {
       selected.push(candidate);
     }
   }
-  if (selected.length === 0) {
-    emit({ type: "done", installed: [], replaced: [], failed });
-    return;
-  }
-  const duplicate = duplicateFolder(selected);
-  if (duplicate !== null) {
-    emit({
-      type: "error",
-      error: operationError(
-        "invalid-input",
-        `Two selected skills share the install folder ${JSON.stringify(duplicate)}; install them in separate runs.`,
-      ),
-    });
-    return;
-  }
+  if (selected.length === 0) return true;
 
   const lock = await readLockfile(context.paths.lockfilePath);
   if (!lock.ok) {
     emit({ type: "error", error: lock.error });
-    return;
+    return false;
   }
   const folderNames = await presentFolders(context.paths.managedDirectory);
   const lockKeys = Object.keys(lock.value.skills);
@@ -362,62 +382,55 @@ async function runInstall(
       candidate,
       target: resolveInstallTarget(candidate.name, { lockKeys, folderNames }),
     }));
-  const sharedFolder = duplicateValue(targets.map(({ target }) => target.folderName));
-  if (sharedFolder !== null) {
-    emit({
-      type: "error",
-      error: operationError(
-        "invalid-input",
-        `Two selected skills share the install folder ${JSON.stringify(sharedFolder)}; install them in separate runs.`,
-      ),
-    });
-    return;
-  }
-  const sharedKey = duplicateValue(targets.map(({ target }) => target.key));
-  if (sharedKey !== null) {
-    emit({
-      type: "error",
-      error: operationError(
-        "invalid-input",
-        `Two selected skills share the lock entry ${JSON.stringify(sharedKey)}; install them in separate runs.`,
-      ),
-    });
-    return;
+  const conflict = selectionConflict(targets);
+  if (conflict !== null) {
+    emit({ type: "error", error: conflict });
+    return false;
   }
 
-  const installed: string[] = [];
-  const replaced: string[] = [];
   for (let index = 0; index < targets.length; index += 1) {
-    if (signal.aborted) return;
+    if (signal.aborted) break;
     const { candidate, target } = targets[index]!;
     emit({ type: "progress", phase: "installing", name: candidate.name, index, total: targets.length });
-    const copied = await installSkillDirectory(
-      context.paths.managedDirectory,
-      target.folderName,
-      candidate.directory,
-      signal,
-    );
-    if (!copied.ok) {
-      if (signal.aborted) return;
-      failed.push({ name: candidate.name, message: copied.error.message });
-      continue;
+    try {
+      const copied = await installSkillDirectory(
+        context.paths.managedDirectory,
+        target.folderName,
+        candidate.directory,
+        signal,
+        () => writeLockEntry(context, resolved.parsed, candidate, target.key),
+      );
+      if (!copied.ok) {
+        failed.push({ name: candidate.name, message: copied.error.message });
+        continue;
+      }
+      if (copied.value.replaced) result.replaced.push(candidate.name);
+      else result.installed.push(candidate.name);
+      emit({ type: "progress", phase: "installed", name: candidate.name, index, total: targets.length });
+    } catch (error) {
+      if (signal.aborted) break;
+      failed.push({ name: candidate.name, message: describe(error) });
     }
-    const written = await writeLockEntry(context.paths.lockfilePath, resolved.parsed, candidate, target.key);
-    if (!written.ok) {
-      if (signal.aborted) return;
-      // shortcut: a lock write that fails after the copy leaves an unmanaged install; a retry records it.
-      failed.push({ name: candidate.name, message: written.error.message });
-      continue;
-    }
-    if (copied.value.replaced) replaced.push(candidate.name);
-    else installed.push(candidate.name);
-    emit({ type: "progress", phase: "installed", name: candidate.name, index, total: targets.length });
   }
-  emit({ type: "done", installed, replaced, failed });
+  return true;
 }
 
-function duplicateFolder(candidates: readonly InstallableCandidate[]): string | null {
-  return duplicateValue(candidates.map((candidate) => sanitizeName(candidate.name)));
+/** Two selected skills may not share a destination: each install gets its own folder and entry. */
+function selectionConflict(
+  targets: readonly { readonly target: InstallTarget }[],
+): OperationError | null {
+  const folder = duplicateValue(targets.map(({ target }) => target.folderName));
+  if (folder !== null) return conflictError("install folder", folder);
+  const key = duplicateValue(targets.map(({ target }) => target.key));
+  if (key !== null) return conflictError("lock entry", key);
+  return null;
+}
+
+function conflictError(subject: string, value: string): OperationError {
+  return operationError(
+    "invalid-input",
+    `Two selected skills share the ${subject} ${JSON.stringify(value)}; install them in separate runs.`,
+  );
 }
 
 function duplicateValue(values: readonly string[]): string | null {
@@ -431,29 +444,40 @@ function duplicateValue(values: readonly string[]): string | null {
 
 /** One standard entry per install; `installedAt` survives a replace, unknown fields survive too. */
 async function writeLockEntry(
-  lockfilePath: string,
+  context: AddContext,
   parsed: ParsedSource,
   candidate: InstallableCandidate,
   key: string,
 ): Promise<Result<null>> {
-  return mutateLockfile(lockfilePath, (lock) => {
-    const previous = lock.skills[key];
-    const now = new Date().toISOString();
-    const next: LockEntry = {
-      ...previous,
-      source: normalizedSource(parsed),
-      sourceType: parsed.type,
-      sourceUrl: parsed.url,
-      skillPath: candidate.skillPath,
-      skillFolderHash: candidate.folderHash,
-      installedAt: previous?.installedAt ?? now,
-      updatedAt: now,
+  const mutate = context.mutateLock ?? mutateLockfile;
+  try {
+    return await mutate(context.paths.lockfilePath, (lock) => {
+      const previous = lock.skills[key];
+      const now = new Date().toISOString();
+      const next: LockEntry = {
+        ...previous,
+        source: normalizedSource(parsed),
+        sourceType: parsed.type,
+        sourceUrl: parsed.url,
+        skillPath: candidate.skillPath,
+        skillFolderHash: candidate.folderHash,
+        installedAt: previous?.installedAt ?? now,
+        updatedAt: now,
+      };
+      if (parsed.ref === undefined) delete next.ref;
+      else next.ref = parsed.ref;
+      // A replacement must not keep the previous source's plugin group.
+      if (candidate.pluginName === undefined) delete next.pluginName;
+      else next.pluginName = candidate.pluginName;
+      lock.skills[key] = next;
+      return { ok: true, value: null };
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: operationError("install-failed", `Cannot write the lock entry: ${describe(error)}`),
     };
-    if (parsed.ref === undefined) delete next.ref;
-    else next.ref = parsed.ref;
-    lock.skills[key] = next;
-    return { ok: true, value: null };
-  });
+  }
 }
 
 /** `owner/repo` for GitHub and GitLab; the clone URL for a generic git source. */

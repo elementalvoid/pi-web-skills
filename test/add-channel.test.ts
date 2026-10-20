@@ -146,7 +146,10 @@ test("openChannel returns before the clone starts and receive returns immediatel
 
     await harness.cloneStarted;
     const receiveStarted = Date.now();
-    channel.receive({ type: "install", names: ["alpha"] }, new AbortController().signal);
+    channel.receive(
+      { type: "install", sourcePaths: ["skills/alpha/SKILL.md"] },
+      new AbortController().signal,
+    );
     assert.ok(Date.now() - receiveStarted < 1000);
     assert.equal(harness.frames.length, 1);
     assert.equal(
@@ -204,7 +207,10 @@ test("an install frame streams progress and done frames without blocking the rec
         );
 
         const receiveStarted = Date.now();
-        channel.receive({ type: "install", names: ["alpha"] }, new AbortController().signal);
+        channel.receive(
+          { type: "install", sourcePaths: ["skills/alpha/SKILL.md"] },
+          new AbortController().signal,
+        );
         assert.ok(Date.now() - receiveStarted < 1000);
         assert.equal(
           harness.frames.some((frame) => (frame as { type?: string }).type === "done"),

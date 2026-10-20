@@ -212,7 +212,7 @@ test("an existing target asks for overwrite confirmation before any install fram
   assert.equal(bindingBefore(confirming, "?disabled", "Overwrite and install"), undefined);
 
   click(confirming, "Overwrite and install");
-  assert.deepEqual(sent, [{ type: "install", names: ["notes", "alpha"] }]);
+  assert.deepEqual(sent, [{ type: "install", sourcePaths: ["skills/notes/SKILL.md", "skills/alpha/SKILL.md"] }]);
 });
 
 test("a new install shows progress, a result, a refreshed list, and a dismissible reload reminder", async () => {
@@ -238,7 +238,7 @@ test("a new install shows progress, a result, a refreshed list, and a dismissibl
 
   fire(panel(context), "Select all", "@change");
   click(panel(context), "Install selected");
-  assert.deepEqual(sent, [{ type: "install", names: ["notes"] }], "no confirmation for a new target");
+  assert.deepEqual(sent, [{ type: "install", sourcePaths: ["skills/notes/SKILL.md"] }], "no confirmation for a new target");
 
   onData({ type: "progress", phase: "installing", name: "notes", index: 0, total: 1 });
   assert.match(textOf(panel(context)), /Installing 1 of 1: notes/);
