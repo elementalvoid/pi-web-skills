@@ -6,6 +6,49 @@ A PI WEB panel for managing the agent skills that Pi loads from `~/.agents/skill
 server entry. Upstream skills.sh behavior is the contract; the panel never runs the
 `skills` CLI at runtime.
 
+![The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions](docs/skills-panel.png)
+
+## What the panel does
+
+The panel is hosted in a workspace but manages machine-wide state; it never reads
+or writes workspace files. PI WEB's public plugin API has no Settings-pane
+contribution, so a Settings tab would require a PI WEB core change.
+
+It shows a machine-wide notice and the resolved managed directory and lockfile:
+
+- managed directory: the session-daemon user's `~/.agents/skills`;
+- lockfile: `$XDG_STATE_HOME/skills/.skill-lock.json` when `XDG_STATE_HOME` is set,
+  otherwise `~/.agents/.skill-lock.json`.
+
+Five operations:
+
+- **List** every present skill as **managed**, **unmanaged**, or **broken**, with
+  source, ref, plugin, and update time for managed rows. A skill with invalid
+  frontmatter is marked, not hidden. The list is read-only and re-reads state on
+  every page load.
+- **Add** from a GitHub shorthand, a GitHub or GitLab URL, or a generic git URL.
+  Resolve the source first, then select one, several, or all discovered skills.
+  Replacing an existing folder requires an explicit overwrite confirmation.
+- **Search** skills.sh by keyword and start an Add from a result.
+- **Update** every managed install by comparing the remote folder hash at the
+  locked ref. **Check for updates** is a read-only preflight: it reports
+  available, unchanged, skipped, deleted, and failed entries without copying or
+  writing anything. **Update all** asks first and states that a remote change
+  replaces the installed folder and can overwrite a local edit. Changed and
+  relocated skills are replaced; unchanged, skipped, deleted-upstream, and failed
+  entries are reported separately.
+- **Remove** a managed install and its lock entry, or remove only the stale lock
+  entry for a broken skill. Remove always asks first.
+
+Unmanaged skills are read-only for Update and Remove. Add may replace an unmanaged
+folder only after the overwrite confirmation. Every operation is safe to retry:
+cancelling Add or Update stops the work, and an Update that fails during a copy
+leaves the install it was replacing intact.
+
+After an install, update, or removal that changed a directory, the panel shows a
+dismissible reminder to run `/reload` in each idle Pi session. The panel never
+reloads sessions itself.
+
 ## Install
 
 ### Requirements
@@ -64,49 +107,6 @@ container replacement.
 
 For a development loop with local changes, see
 [docs/local-development.md](docs/local-development.md).
-
-## What the panel does
-
-The panel is hosted in a workspace but manages machine-wide state; it never reads
-or writes workspace files. PI WEB's public plugin API has no Settings-pane
-contribution, so a Settings tab would require a PI WEB core change.
-
-It shows a machine-wide notice and the resolved managed directory and lockfile:
-
-- managed directory: the session-daemon user's `~/.agents/skills`;
-- lockfile: `$XDG_STATE_HOME/skills/.skill-lock.json` when `XDG_STATE_HOME` is set,
-  otherwise `~/.agents/.skill-lock.json`.
-
-![The Skills panel: machine-wide paths, Add and Search cards, Update all and Check for updates, and an expanded skill row showing metadata and actions](docs/skills-panel.png)
-
-Five operations:
-
-- **List** every present skill as **managed**, **unmanaged**, or **broken**, with
-  source, ref, plugin, and update time for managed rows. A skill with invalid
-  frontmatter is marked, not hidden. The list is read-only and re-reads state on
-  every page load.
-- **Add** from a GitHub shorthand, a GitHub or GitLab URL, or a generic git URL.
-  Resolve the source first, then select one, several, or all discovered skills.
-  Replacing an existing folder requires an explicit overwrite confirmation.
-- **Search** skills.sh by keyword and start an Add from a result.
-- **Update** every managed install by comparing the remote folder hash at the
-  locked ref. **Check for updates** is a read-only preflight: it reports
-  available, unchanged, skipped, deleted, and failed entries without copying or
-  writing anything. **Update all** asks first and states that a remote change
-  replaces the installed folder and can overwrite a local edit. Changed and
-  relocated skills are replaced; unchanged, skipped, deleted-upstream, and failed
-  entries are reported separately.
-- **Remove** a managed install and its lock entry, or remove only the stale lock
-  entry for a broken skill. Remove always asks first.
-
-Unmanaged skills are read-only for Update and Remove. Add may replace an unmanaged
-folder only after the overwrite confirmation. Every operation is safe to retry:
-cancelling Add or Update stops the work, and an Update that fails during a copy
-leaves the install it was replacing intact.
-
-After an install, update, or removal that changed a directory, the panel shows a
-dismissible reminder to run `/reload` in each idle Pi session. The panel never
-reloads sessions itself.
 
 ## V1 limits
 
