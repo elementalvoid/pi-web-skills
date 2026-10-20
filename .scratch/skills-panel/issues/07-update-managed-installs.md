@@ -42,7 +42,7 @@
 
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
-- `npm test` — pass: 163 tests, 0 failures.
+- `npm test` — pass: 163 tests, 0 failures at the feature commit; 178 after merging `integration/skills-panel` (ticket 08), 0 failures.
 
 **Notes**
 
