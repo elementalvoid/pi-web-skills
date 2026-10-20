@@ -22,6 +22,7 @@ Non-goals for v1: project installs, `skills-lock.json`, archives/direct URLs, lo
 - [ADR 0004: Update follows upstream](docs/adr/0004-upstream-update-semantics.md)
 - [Vocabulary](GLOSSARY.md)
 - [Verified upstream behavior and vendoring plan](docs/upstream-parity.md)
+- [Local development and testing](docs/local-development.md)
 
 ## How it runs
 
