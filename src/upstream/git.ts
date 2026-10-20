@@ -1,9 +1,9 @@
 import { mkdtemp } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type { ParsedSource } from "../vendor/skills/types.ts";
 import type { Result } from "../operations/errors.ts";
 import { operationError } from "../operations/errors.ts";
-import { removeTempDirectory } from "../operations/containment.ts";
+import { isRealPathInside, removeTempDirectory } from "../operations/containment.ts";
 
 /** The host's bounded `execFile` adapter, narrowed to what git operations need. */
 export type ExecFileRequest = {
@@ -33,6 +33,9 @@ const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_OPTIONAL_LOCKS: "0",
 };
 
+/** A daemon-inherited repository location must not redirect the clone or its hashes. */
+const GIT_UNSET_ENV: readonly string[] = ["GIT_DIR", "GIT_WORK_TREE"];
+
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
 const TREE_SHA = /^[0-9a-f]{40}$/;
 
@@ -52,7 +55,7 @@ export async function cloneSource(
   } catch (error) {
     return cloneFailure(`Cannot create a temporary directory: ${describe(error)}`, signal);
   }
-  if (!isInside(tempRoot, directory)) {
+  if (!(await isRealPathInside(tempRoot, directory))) {
     await removeTempDirectory(tempRoot, directory);
     return cloneFailure("The temporary directory is outside the temp root.", signal);
   }
@@ -100,7 +103,7 @@ export async function computeGitFolderHash(
   signal: AbortSignal,
 ): Promise<Result<string>> {
   const revision = folderPath === "" ? "HEAD^{tree}" : `HEAD:${folderPath}`;
-  const result = await runGit(exec, ["rev-parse", "--verify", revision], {
+  const result = await runGit(exec, ["rev-parse", "--verify", "--end-of-options", revision], {
     cwd: cloneDirectory,
     signal,
   });
@@ -135,6 +138,7 @@ async function runGit(
       args,
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       env: GIT_ENV,
+      unsetEnv: GIT_UNSET_ENV,
       timeoutMs: CLONE_TIMEOUT_MS,
       signal: options.signal,
     });
@@ -166,11 +170,6 @@ function cloneFailure(message: string, signal: AbortSignal): Result<never> {
       signal.aborted ? "The clone was cancelled." : `${detail}. Check the source and retry.`,
     ),
   };
-}
-
-function isInside(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate));
-  return relativePath !== "" && relativePath !== ".." && !relativePath.startsWith(`..${sep}`);
 }
 
 function describe(error: unknown): string {

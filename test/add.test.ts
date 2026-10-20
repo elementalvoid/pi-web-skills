@@ -98,13 +98,15 @@ async function exists(path: string): Promise<boolean> {
 
 /** Run one real process so tests observe the same argv and env the daemon would. */
 function runProcess(request: ExecFileRequest): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...request.env };
+  for (const key of request.unsetEnv ?? []) delete env[key];
   return new Promise((resolve) => {
     execFileCallback(
       request.file,
       [...(request.args ?? [])],
       {
         cwd: request.cwd,
-        env: { ...process.env, ...request.env },
+        env,
         timeout: request.timeoutMs,
         signal: request.signal,
       },
@@ -223,8 +225,70 @@ test("the clone runs through the exec adapter with argv only and bounded git env
     assert.ok(clone.args?.includes(source));
     assert.equal(clone.env?.["GIT_TERMINAL_PROMPT"], "0");
     assert.equal(clone.env?.["GIT_OPTIONAL_LOCKS"], "0");
+    assert.deepEqual(clone.unsetEnv, ["GIT_DIR", "GIT_WORK_TREE"]);
     assert.equal(clone.timeoutMs, 120_000);
     assert.ok(clone.args?.every((argument) => !argument.includes(" ")));
+    for (const request of requests) {
+      assert.deepEqual(request.unsetEnv, ["GIT_DIR", "GIT_WORK_TREE"], String(request.args?.[0]));
+    }
+
+    await session.dispose();
+  });
+});
+
+test("a lock entry without its install folder is a new target, not an installed one", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(
+      harness.paths.lockfilePath,
+      JSON.stringify({ version: 3, skills: { alpha: { source: "owner/repo" } } }),
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+
+    await session.settled;
+
+    const page = frames[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    assert.equal(page.candidates[0]?.existing, "none");
+
+    await session.dispose();
+  });
+});
+
+test("an existing target matches by its sanitised directory name", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "ce-review", description: "Review skill", folder: "ce-review" },
+      { name: "notes", description: "Notes skill", folder: "notes" },
+      { name: "gamma", description: "Gamma skill", folder: "gamma" },
+    ]);
+    // Written by an older tool: the folder name only matches after sanitising.
+    await mkdir(join(harness.paths.managedDirectory, "CE Review"), { recursive: true });
+    await mkdir(join(harness.paths.managedDirectory, "notes"), { recursive: true });
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(
+      harness.paths.lockfilePath,
+      JSON.stringify({ version: 3, skills: { notes: { source: "owner/repo" } } }),
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+
+    await session.settled;
+
+    const page = frames[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    assert.deepEqual(
+      page.candidates.map((candidate) => [candidate.name, candidate.existing]),
+      [
+        ["ce-review", "unmanaged"],
+        ["gamma", "none"],
+        ["notes", "managed"],
+      ],
+    );
 
     await session.dispose();
   });
@@ -259,6 +323,68 @@ test("candidates report the existing target state as none, managed, or unmanaged
         ["gamma", "none"],
       ],
     );
+
+    await session.dispose();
+    assert.deepEqual(await readdir(harness.tempRoot), []);
+  });
+});
+
+test("a malformed lock reports lock-unreadable instead of pretending it has no entries", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(harness.paths.lockfilePath, '{ "version": 3, "skills": ');
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+
+    await session.settled;
+
+    const frame = frames[0];
+    assert.equal(frame?.type, "error", JSON.stringify(frames));
+    if (frame?.type !== "error") return;
+    assert.equal(frame.error.code, "lock-unreadable");
+    assert.match(frame.error.message, /lock/i);
+    assert.equal(frames.length, 1);
+    assert.deepEqual(await readdir(harness.tempRoot), []);
+  });
+});
+
+test("a full candidate page stays under the host's 64 KiB frame bound for hostile metadata", async () => {
+  await withHarness(async (harness) => {
+    // Quotes and backslashes double under JSON escaping: a near-worst-case frame.
+    const hostileName = `evil-${String.fromCodePoint(27)}[2J\u0007-${'"'.repeat(4000)}`;
+    const hostileDescription = `desc ${'"'.repeat(20_000)} ${String.fromCodePoint(27)}[31m\u0000 ${String.fromCodePoint(0x1f600).repeat(1000)}`;
+    const skills = Array.from({ length: 25 }, (_, index) => ({
+      name: `${hostileName}-${String(index)}`,
+      description: `${hostileDescription}-${String(index)}`,
+      folder: `hostile-${String(index)}`,
+    }));
+    const source = await createSourceRepo(harness, skills);
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+
+    await session.settled;
+
+    const pages = frames.filter((frame) => frame.type === "candidates");
+    assert.equal(pages.length, 1);
+    const page = pages[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    assert.equal(page.candidates.length, 25);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(page), "utf8") < 64 * 1024,
+      `frame is ${String(Buffer.byteLength(JSON.stringify(page), "utf8"))} bytes`,
+    );
+    for (const candidate of page.candidates) {
+      for (const text of [candidate.name, candidate.description, candidate.sourcePath, candidate.folderName]) {
+        assert.doesNotMatch(text, /[\u0000-\u001f\u007f-\u009f]/, text.slice(0, 40));
+      }
+      assert.ok(Buffer.byteLength(candidate.name, "utf8") < 200, "the name is capped");
+      assert.ok(Buffer.byteLength(candidate.description, "utf8") < 1000, "the description is capped");
+      assert.ok(Buffer.byteLength(candidate.sourcePath, "utf8") < 600, "the source path is capped");
+      assert.match(candidate.folderName, /^[a-z0-9._-]+$/);
+    }
 
     await session.dispose();
     assert.deepEqual(await readdir(harness.tempRoot), []);
@@ -380,6 +506,7 @@ test("GitHub sources hash a skill folder with the git tree SHA, never a content 
     assert.deepEqual(revParse?.args, [
       "rev-parse",
       "--verify",
+      "--end-of-options",
       "HEAD:skills/alpha",
     ]);
     assert.equal(revParse?.cwd, session.cloneDirectory());
@@ -416,7 +543,7 @@ test("a root-level skill hashes the repository tree", async () => {
       [["SKILL.md", treeSha]],
     );
     const revParse = requests.find((request) => request.args?.[0] === "rev-parse");
-    assert.deepEqual(revParse?.args, ["rev-parse", "--verify", "HEAD^{tree}"]);
+    assert.deepEqual(revParse?.args, ["rev-parse", "--verify", "--end-of-options", "HEAD^{tree}"]);
 
     await session.dispose();
   });

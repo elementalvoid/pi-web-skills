@@ -55,17 +55,21 @@ export async function assertSafeSkillDirectory(
   return { ok: true, value: target };
 }
 
-/** Delete a temp directory only when its real path stays inside the real temp root. */
-export async function removeTempDirectory(tempRoot: string, candidate: string): Promise<boolean> {
-  let root: string;
-  let target: string;
+/** True when `candidate` resolves to a real path strictly inside the real `root`. */
+export async function isRealPathInside(root: string, candidate: string): Promise<boolean> {
   try {
-    root = await resolveRealPath(resolve(tempRoot));
-    target = await resolveRealPath(resolve(candidate));
+    return isStrictlyInside(
+      await resolveRealPath(resolve(root)),
+      await resolveRealPath(resolve(candidate)),
+    );
   } catch {
     return false;
   }
-  if (!isStrictlyInside(root, target)) return false;
+}
+
+/** Delete a temp directory only when its real path stays inside the real temp root. */
+export async function removeTempDirectory(tempRoot: string, candidate: string): Promise<boolean> {
+  if (!(await isRealPathInside(tempRoot, candidate))) return false;
   await rm(resolve(candidate), { recursive: true, force: true });
   return true;
 }

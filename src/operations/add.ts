@@ -1,7 +1,8 @@
-import { stat } from "node:fs/promises";
-import { basename, join, relative, sep } from "node:path";
+import { readdir } from "node:fs/promises";
+import { basename, relative, sep } from "node:path";
 import { parseSource } from "../vendor/skills/source-parser.ts";
 import { computeSkillFolderHash } from "../vendor/skills/local-lock.ts";
+import { sanitizeMetadata } from "../vendor/skills/sanitize.ts";
 import { discoverSkills } from "../vendor/skills/skills.ts";
 import type { ParsedSource } from "../vendor/skills/types.ts";
 import { cloneSource, computeGitFolderHash } from "../upstream/git.ts";
@@ -16,8 +17,13 @@ import { readLockfile } from "./lockfile.ts";
 /** Candidates per channel frame; keeps every frame far below the host's 64 KiB bound. */
 export const CANDIDATE_PAGE_SIZE = 25;
 
-/** Longest description a candidate frame carries. */
-const DESCRIPTION_LIMIT = 500;
+/**
+ * Per-field byte caps. With 25 candidates per page and JSON escaping at worst
+ * doubling a byte, the largest possible page is under 50 KiB.
+ */
+const NAME_LIMIT = 80;
+const DESCRIPTION_LIMIT = 400;
+const SOURCE_PATH_LIMIT = 300;
 
 /** One skill discovered in a resolved source, before anything is installed. */
 export type AddCandidate = {
@@ -210,7 +216,11 @@ async function discoverCandidates(
   }
 
   const lock = await readLockfile(context.paths.lockfilePath);
-  const lockKeys = lock.ok ? Object.keys(lock.value.skills) : [];
+  // An unreadable lock blocks the whole add: without it, an existing managed
+  // install would be mislabelled and a later write would drop other entries.
+  if (!lock.ok) return lock;
+  const lockKeys = Object.keys(lock.value.skills);
+  const folderNames = await presentFolders(context.paths.managedDirectory);
   const candidates: AddCandidate[] = [];
   for (const skill of selected) {
     if (signal.aborted) return discoveryFailure("The add operation was cancelled.");
@@ -222,21 +232,39 @@ async function discoverCandidates(
     if (!hashed.ok) return hashed;
 
     const folderName = sanitizeName(skill.name);
-    const managed = matchSkillName(folderName, { lockKeys, folderNames: [] })?.lockKey != null;
+    // The same three rungs List uses: exact lock key, sanitised key, sanitised
+    // folder name. A lock key without a present folder is a broken entry, not
+    // a target this candidate would replace.
+    const match = matchSkillName(skill.name, { lockKeys, folderNames });
+    let existing: AddCandidate["existing"] = "none";
+    if (match?.lockKey != null && match.folderName != null) existing = "managed";
+    else if (match?.folderName != null) existing = "unmanaged";
+    const sourcePath = candidateText(
+      relativeFolder === "" ? "SKILL.md" : `${relativeFolder}/SKILL.md`,
+      SOURCE_PATH_LIMIT,
+    );
     candidates.push({
-      name: skill.name,
-      description: skill.description.slice(0, DESCRIPTION_LIMIT),
-      sourcePath: relativeFolder === "" ? "SKILL.md" : `${relativeFolder}/SKILL.md`,
+      name: candidateText(skill.name, NAME_LIMIT),
+      description: candidateText(skill.description, DESCRIPTION_LIMIT),
+      sourcePath,
       folderName,
       folderHash: hashed.value,
-      existing: managed
-        ? "managed"
-        : (await exists(join(context.paths.managedDirectory, folderName)))
-          ? "unmanaged"
-          : "none",
+      existing,
     });
   }
   return { ok: true, value: { candidates } };
+}
+
+/** Names of the directories present in the managed directory; a missing directory is empty. */
+async function presentFolders(managedDirectory: string): Promise<string[]> {
+  try {
+    const entries = await readdir(managedDirectory, { withFileTypes: true });
+    const names: string[] = [];
+    for (const entry of entries) if (entry.isDirectory()) names.push(entry.name);
+    return names;
+  } catch {
+    return [];
+  }
 }
 
 async function contentFolderHash(skillDirectory: string): Promise<Result<string>> {
@@ -251,17 +279,33 @@ async function contentFolderHash(skillDirectory: string): Promise<Result<string>
   }
 }
 
-function discoveryFailure(message: string): Result<never> {
-  return { ok: false, error: operationError("discovery-failed", message) };
+/** Strip terminal escapes and control characters, then cap a display string by UTF-8 bytes. */
+function candidateText(value: string, limit: number): string {
+  return capBytes(sanitizeMetadata(value).replace(/\s+/g, " "), limit);
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
+function capBytes(value: string, limit: number): string {
+  if (Buffer.byteLength(value, "utf8") <= limit) return value;
+  const budget = limit - Buffer.byteLength("…", "utf8");
+  let out = "";
+  let used = 0;
+  for (const char of value) {
+    const size = utf8Size(char.codePointAt(0) ?? 0);
+    if (used + size > budget) break;
+    out += char;
+    used += size;
   }
+  return `${out}…`;
+}
+
+function utf8Size(code: number): number {
+  if (code < 0x80) return 1;
+  if (code < 0x800) return 2;
+  return code < 0x10000 ? 3 : 4;
+}
+
+function discoveryFailure(message: string): Result<never> {
+  return { ok: false, error: operationError("discovery-failed", message) };
 }
 
 function describe(error: unknown): string {
