@@ -9,7 +9,13 @@ src/
 │   ├── add.ts            resolve source -> select -> install -> lock entry
 │   ├── list.ts           present + lock -> managed / unmanaged / broken
 │   ├── update.ts         remote hash vs lock -> replace changed installs
-│   └── remove.ts         remove install + entry; remove stale entry
+│   ├── remove.ts         remove install + entry; remove stale entry
+│   ├── paths.ts          managed directory and lockfile locations
+│   ├── context.ts        what one operation may touch
+│   ├── errors.ts         structured operation errors
+│   ├── lockfile.ts       standard global lock read, atomic write, serialized mutation
+│   ├── matching.ts       requested name -> lock key and folder name
+│   └── containment.ts    managed-directory and temp-path checks
 ├── upstream/
 │   ├── git.ts            bounded git/gh runner over host execFile
 │   ├── github-tree.ts    repo tree fetch + folder tree SHA
