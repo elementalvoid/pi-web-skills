@@ -47,14 +47,14 @@ Path: `~/.agents/.skill-lock.json`, or `$XDG_STATE_HOME/skills/.skill-lock.json`
 | UI action | Upstream behavior we reproduce |
 | --- | --- |
 | Add | `add <source> -g -a pi -y [--skill <name>...]` |
-| List | `ls -g --json`, plus direct lock reads for `ref`, hash, and timestamps |
+| List | `ls -g --json` semantics, read directly from the directory and lock (no CLI execution) |
 | Update | `update -g -y [<name>...]` |
 | Remove | `remove -g -a pi -y <name>` |
 | Search | `GET https://skills.sh/api/search?q=<query>&limit=20` |
 
 ### Add
 
-- Resolve the source (GitHub shorthand/URL, generic git URL, or local path).
+- Resolve the source (GitHub shorthand/URL or generic git URL). Local directory sources are out of v1.
 - Discover skills, select names, and copy each skill directory to `~/.agents/skills/<sanitized-name>`.
 - Pi is a universal agent: a global install copies to the canonical directory and creates no symlink.
 - Write one lock entry per installed skill with the fields above.
@@ -62,8 +62,8 @@ Path: `~/.agents/.skill-lock.json`, or `$XDG_STATE_HOME/skills/.skill-lock.json`
 
 ### Update
 
-- Only entries with `sourceType: "github"`, a `skillPath`, and a non-empty `skillFolderHash` are checked automatically.
-- Upstream skips local paths, generic git URLs, well-known sources, entries without a hash, entries without a path, and sources with no version tracking. Show the skip reason.
+- Updatable in v1: entries with `sourceType: "github"`, a `skillPath`, and a non-empty `skillFolderHash`.
+- Other source types are skipped or out of scope. Show the upstream skip reason for local paths, generic git URLs, entries without a hash, and entries without a path.
 - Re-fetch the lock's `ref`, compare the remote folder hash, and replace only changed installs.
 - Deleted upstream skills are reported, not deleted non-interactively.
 - `skills check` is not read-only: in 1.7.4 it dispatches to the same `runUpdate` path. Do not expose a separate Check button.

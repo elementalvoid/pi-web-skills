@@ -30,7 +30,7 @@ A PI WEB plugin package with:
 - a **server entry** in the session daemon, which owns filesystem and git work and exposes peer requests;
 - a **browser entry** contributing a machine-scoped workspace panel.
 
-The panel is hosted inside a workspace, but the skills it manages are machine-wide. The UI says so.
+The panel is hosted inside a workspace, but the skills it manages are machine-wide. The UI says so. In the TrueNAS image, `HOME=/data/home`, so the managed directory is `/data/home/.agents/skills` and the lock is `/data/home/.agents/.skill-lock.json`.
 
 Install and update through **Settings → Pi packages**. A server-module change requires a session-daemon restart. Skill changes require `/reload` in each idle session; the panel only reminds the user.
 
