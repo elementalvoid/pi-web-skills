@@ -17,13 +17,12 @@ type FakeFetch = {
 /** A fetch that records its URL and answers with one canned response. */
 function fetchReturning(
   payload: unknown,
-  options: { readonly ok?: boolean; readonly status?: number } = {},
+  options: { readonly status?: number } = {},
 ): FakeFetch {
   const calls: string[] = [];
   const fetch: FetchLike = async (url) => {
     calls.push(url);
     return {
-      ok: options.ok ?? true,
       status: options.status ?? 200,
       json: async () => payload,
     };
@@ -118,6 +117,26 @@ test("every string is sanitised and long strings are capped", async () => {
   assert.ok(capped.source.length <= 200, `source capped, got ${String(capped.source.length)}`);
 });
 
+test("rows whose sanitised id, name, or source is empty are dropped", async () => {
+  const { fetch } = fetchReturning({
+    skills: [
+      row("\u001b]0;title\u0007", "kept-name", "owner/repo", 1),
+      row("owner/repo/name", "\u001b[31m\u001b[0m", "owner/repo", 2),
+      row("owner/repo/source", "kept-source", " \n ", 3),
+      row("owner/repo/valid", "valid", "owner/repo", 4),
+    ],
+  });
+
+  const result = await searchSkills(context(fetch), "git");
+
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      results: [{ id: "owner/repo/valid", name: "valid", source: "owner/repo", installs: 4 }],
+    },
+  });
+});
+
 test("malformed rows are dropped and the result count is capped", async () => {
   const malformed: unknown[] = [
     "nope",
@@ -154,7 +173,6 @@ test("malformed rows are dropped and the result count is capped", async () => {
 
 test("a malformed response is search-invalid-response", async () => {
   const rejects: FetchLike = async () => ({
-    ok: true,
     status: 200,
     json: () => Promise.reject(new SyntaxError("Unexpected token <")),
   });
@@ -170,7 +188,7 @@ test("a malformed response is search-invalid-response", async () => {
 });
 
 test("a non-2xx response is search-unavailable", async () => {
-  const { fetch } = fetchReturning({ skills: [] }, { ok: false, status: 503 });
+  const { fetch } = fetchReturning({ skills: [] }, { status: 503 });
 
   const result = await searchSkills(context(fetch), "git");
 
@@ -218,6 +236,22 @@ test("a request that outlives the timeout is search-unavailable with a retry hin
     });
 
   const result = await searchSkills(context(hangUntilAbort, { timeoutMs: 5 }), "git");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "search-unavailable");
+    assert.match(result.error.message, /timed out/i);
+    assert.match(result.error.message, /retry/i);
+  }
+});
+
+test("a stalled response body also times out with the retry hint", async () => {
+  const stalledBody: FetchLike = async () => ({
+    status: 200,
+    json: () => new Promise<unknown>(() => undefined),
+  });
+
+  const result = await searchSkills(context(stalledBody, { timeoutMs: 5 }), "git");
 
   assert.equal(result.ok, false);
   if (!result.ok) {
