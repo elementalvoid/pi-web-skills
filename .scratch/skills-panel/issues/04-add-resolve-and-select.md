@@ -52,4 +52,4 @@ Commands:
 
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
-- `npm test` — pass, 107 tests total; 6 new (malformed lock, broken and sanitised-directory targets, hostile candidate page bound, pending-open cancel, disabled install copy).
+- `npm test` — pass, 111 tests total after merging the ticket 03 fixes; 6 new in this branch (malformed lock, broken and sanitised-directory targets, hostile candidate page bound, pending-open cancel, disabled install copy).
