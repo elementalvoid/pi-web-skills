@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import type { AddContext, AddFrame, AddSession } from "../src/operations/add.ts";
 import { createAddSession } from "../src/operations/add.ts";
+import { mutateLockfile } from "../src/operations/lockfile.ts";
+import { installSkillDirectory } from "../src/upstream/install.ts";
 import type { ExecFile, ExecFileRequest, ExecFileResult } from "../src/upstream/git.ts";
 
 const started = new AbortController();
@@ -55,7 +57,7 @@ type FixtureSkill = { readonly name: string; readonly description: string; reado
 async function createSourceRepo(
   harness: Harness,
   skills: readonly FixtureSkill[],
-  options: { readonly rootSkill?: boolean } = {},
+  options: { readonly rootSkill?: boolean; readonly pluginName?: string } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(harness.fixtureRoot, "repo-"));
   await git(root, ["init", "-q"]);
@@ -67,6 +69,16 @@ async function createSourceRepo(
   }
   for (const skill of skills) {
     await writeSkill(root, skill);
+  }
+  if (options.pluginName !== undefined) {
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(root, ".claude-plugin", "plugin.json"),
+      JSON.stringify({
+        name: options.pluginName,
+        skills: skills.map((skill) => (skill.folder === "" ? "." : `./skills/${skill.folder}`)),
+      }),
+    );
   }
   await git(root, ["add", "."]);
   await git(root, ["commit", "-qm", "fixture"]);
@@ -139,6 +151,7 @@ function startAdd(
   source: string,
   exec: ExecFile,
   signal: AbortSignal = started.signal,
+  overrides: Partial<AddContext> = {},
 ): { session: AddSession; frames: AddFrame[] } {
   const frames: AddFrame[] = [];
   const session = createAddSession(
@@ -148,6 +161,7 @@ function startAdd(
       exec,
       tempRoot: harness.tempRoot,
       signal,
+      ...overrides,
     },
     (frame) => frames.push(frame),
   );
@@ -289,6 +303,69 @@ test("an existing target matches by its sanitised directory name", async () => {
         ["notes", "managed"],
       ],
     );
+
+    await session.dispose();
+  });
+});
+
+test("two same-named skills install by source path, so the selected one's content wins", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "dup", description: "First copy", folder: "first" },
+      { name: "dup", description: "Second copy", folder: "second" },
+    ]);
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    const page = frames[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    const second = page.candidates[1];
+    assert.deepEqual(
+      page.candidates.map((candidate) => [candidate.name, candidate.sourcePath]),
+      [
+        ["dup", "skills/first/SKILL.md"],
+        ["dup", "skills/second/SKILL.md"],
+      ],
+    );
+    assert.ok(second !== undefined);
+
+    session.install([second.sourcePath]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["dup"]);
+    assert.deepEqual(done.failed, []);
+    assert.match(
+      await readFile(join(harness.paths.managedDirectory, "dup", "SKILL.md"), "utf8"),
+      /Second copy/,
+    );
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = (lock["skills"] as Record<string, Record<string, unknown>>)["dup"];
+    assert.equal(entry?.["skillPath"], "skills/second/SKILL.md");
+    assert.equal(entry?.["skillFolderHash"], second.folderHash);
+
+    await session.dispose();
+  });
+});
+
+test("an install from a plugin source records the plugin group", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(
+      harness,
+      [{ name: "alpha", description: "Alpha skill", folder: "alpha" }],
+      { pluginName: "group" },
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["alpha"]);
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = (lock["skills"] as Record<string, Record<string, unknown>>)["alpha"];
+    assert.equal(entry?.["pluginName"], "group");
 
     await session.dispose();
   });
@@ -713,5 +790,532 @@ test("a failed tree lookup reports folder-hash-failed and removes the clone", as
     if (frame?.type !== "error") return;
     assert.equal(frame.error.code, "folder-hash-failed");
     assert.deepEqual(await readdir(harness.tempRoot), []);
+  });
+});
+
+type DoneFrame = Extract<AddFrame, { type: "done" }>;
+
+async function waitForDone(frames: readonly AddFrame[], timeoutMs = 5000): Promise<DoneFrame> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const done = frames.find((frame) => frame.type === "done");
+    if (done !== undefined) return done;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for done: ${JSON.stringify(frames)}`);
+}
+
+async function readJson(path: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+}
+
+test("installing a skill copies its folder and writes one standard lock entry", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["alpha"]);
+    assert.deepEqual(done.replaced, []);
+    assert.deepEqual(done.failed, []);
+    assert.deepEqual(
+      frames
+        .filter((frame) => frame.type === "progress")
+        .map((frame) => [frame.phase, frame.name, frame.index, frame.total]),
+      [
+        ["installing", "alpha", 0, 1],
+        ["installed", "alpha", 0, 1],
+      ],
+    );
+
+    const target = join(harness.paths.managedDirectory, "alpha");
+    assert.match(await readFile(join(target, "SKILL.md"), "utf8"), /name: alpha/);
+
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = lock["skills"] as Record<string, Record<string, unknown>>;
+    assert.equal(lock["version"], 3);
+    assert.deepEqual(Object.keys(entry).sort(), ["alpha"]);
+    assert.deepEqual(Object.keys(entry["alpha"] ?? {}).sort(), [
+      "installedAt",
+      "skillFolderHash",
+      "skillPath",
+      "source",
+      "sourceType",
+      "sourceUrl",
+      "updatedAt",
+    ]);
+    assert.equal(entry["alpha"]?.["source"], source);
+    assert.equal(entry["alpha"]?.["sourceType"], "git");
+    assert.equal(entry["alpha"]?.["sourceUrl"], source);
+    assert.equal(entry["alpha"]?.["skillPath"], "skills/alpha/SKILL.md");
+    assert.match(String(entry["alpha"]?.["skillFolderHash"]), /^[0-9a-f]{64}$/);
+    assert.match(String(entry["alpha"]?.["installedAt"]), /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(entry["alpha"]?.["installedAt"], entry["alpha"]?.["updatedAt"]);
+
+    await session.dispose();
+    assert.deepEqual(await readdir(harness.tempRoot), []);
+  });
+});
+
+async function waitForError(
+  frames: readonly AddFrame[],
+  timeoutMs = 5000,
+): Promise<Extract<AddFrame, { type: "error" }>> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const error = frames.find((frame) => frame.type === "error");
+    if (error !== undefined) return error;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for an error: ${JSON.stringify(frames)}`);
+}
+
+test("installing several skills records one lock entry each and keeps the ref", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+      { name: "beta", description: "Beta skill", folder: "beta" },
+    ]);
+    await git(decodeURIComponent(new URL(source).pathname), ["branch", "stable"]);
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, `${source}#stable`, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md", "skills/beta/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, ["alpha", "beta"]);
+    assert.deepEqual(done.replaced, []);
+    assert.deepEqual(done.failed, []);
+    assert.deepEqual(
+      frames
+        .filter((frame) => frame.type === "progress")
+        .map((frame) => [frame.phase, frame.name, frame.index, frame.total]),
+      [
+        ["installing", "alpha", 0, 2],
+        ["installed", "alpha", 0, 2],
+        ["installing", "beta", 1, 2],
+        ["installed", "beta", 1, 2],
+      ],
+    );
+
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = lock["skills"] as Record<string, Record<string, unknown>>;
+    assert.deepEqual(Object.keys(entry).sort(), ["alpha", "beta"]);
+    const hashes = new Set<string>();
+    for (const name of ["alpha", "beta"]) {
+      assert.equal(entry[name]?.["source"], source);
+      assert.equal(entry[name]?.["sourceType"], "git");
+      assert.equal(entry[name]?.["ref"], "stable");
+      assert.equal(entry[name]?.["skillPath"], `skills/${name}/SKILL.md`);
+      hashes.add(String(entry[name]?.["skillFolderHash"]));
+      assert.match(await readFile(join(harness.paths.managedDirectory, name, "SKILL.md"), "utf8"), new RegExp(`name: ${name}`));
+    }
+    assert.equal(hashes.size, 2);
+
+    await session.dispose();
+  });
+});
+
+test("overwriting a managed install replaces the folder and preserves installedAt, unknown fields, and other entries", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const oldEntry = {
+      source: "owner/old",
+      sourceType: "github",
+      sourceUrl: "https://github.com/owner/old.git",
+      ref: "main",
+      skillPath: "skills/alpha/SKILL.md",
+      skillFolderHash: "f".repeat(40),
+      installedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-02T00:00:00.000Z",
+      futureEntryField: "keep me",
+      pluginName: "group",
+    };
+    const untouched = { ...oldEntry, source: "owner/other", installedAt: "2019-01-01T00:00:00.000Z" };
+    await mkdir(join(harness.paths.managedDirectory, "alpha"), { recursive: true });
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "SKILL.md"), "old body\n");
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "stale.txt"), "must not merge\n");
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(
+      harness.paths.lockfilePath,
+      JSON.stringify({
+        version: 3,
+        skills: { alpha: oldEntry, other: untouched },
+        dismissed: { findSkillsPrompt: true },
+        lastSelectedAgents: ["pi", "claude"],
+        futureTopLevel: { nested: [1, 2, 3] },
+      }),
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, []);
+    assert.deepEqual(done.replaced, ["alpha"]);
+    const target = join(harness.paths.managedDirectory, "alpha");
+    assert.match(await readFile(join(target, "SKILL.md"), "utf8"), /name: alpha/);
+    await assert.rejects(readFile(join(target, "stale.txt")), /ENOENT/);
+
+    const lock = await readJson(harness.paths.lockfilePath);
+    assert.deepEqual(lock["dismissed"], { findSkillsPrompt: true });
+    assert.deepEqual(lock["lastSelectedAgents"], ["pi", "claude"]);
+    assert.deepEqual(lock["futureTopLevel"], { nested: [1, 2, 3] });
+    const entry = lock["skills"] as Record<string, Record<string, unknown>>;
+    assert.deepEqual(entry["other"], untouched);
+    assert.equal(entry["alpha"]?.["source"], source);
+    assert.equal(entry["alpha"]?.["sourceType"], "git");
+    assert.equal(entry["alpha"]?.["installedAt"], "2020-01-01T00:00:00.000Z");
+    assert.notEqual(entry["alpha"]?.["updatedAt"], "2020-01-02T00:00:00.000Z");
+    assert.equal(entry["alpha"]?.["futureEntryField"], "keep me");
+    assert.equal(entry["alpha"]?.["ref"], undefined, "a source without a ref drops the stale ref");
+    assert.equal(
+      entry["alpha"]?.["pluginName"],
+      undefined,
+      "a source without a plugin drops the stale plugin name",
+    );
+
+    await session.dispose();
+  });
+});
+
+test("overwriting an unmanaged target replaces it only when the install is requested and reports replaced", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    await mkdir(join(harness.paths.managedDirectory, "alpha"), { recursive: true });
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "SKILL.md"), "not managed\n");
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "stale.txt"), "must not merge\n");
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, []);
+    assert.deepEqual(done.replaced, ["alpha"]);
+    const target = join(harness.paths.managedDirectory, "alpha");
+    assert.match(await readFile(join(target, "SKILL.md"), "utf8"), /name: alpha/);
+    await assert.rejects(readFile(join(target, "stale.txt")), /ENOENT/);
+    const lock = await readJson(harness.paths.lockfilePath);
+    assert.deepEqual(Object.keys(lock["skills"] as Record<string, unknown>), ["alpha"]);
+
+    await session.dispose();
+  });
+});
+
+test("the installer writes the folder the badge reported, including a legacy sanitised match", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "ce-review", description: "Review skill", folder: "ce-review" },
+    ]);
+    // An older tool installed under the unsanitised folder name.
+    await mkdir(join(harness.paths.managedDirectory, "CE Review"), { recursive: true });
+    await writeFile(join(harness.paths.managedDirectory, "CE Review", "SKILL.md"), "old body\n");
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(
+      harness.paths.lockfilePath,
+      JSON.stringify({
+        version: 3,
+        skills: {
+          "CE Review": {
+            source: "owner/old",
+            sourceType: "github",
+            sourceUrl: "https://github.com/owner/old.git",
+            skillPath: "skills/ce-review/SKILL.md",
+            skillFolderHash: "a".repeat(40),
+            installedAt: "2020-01-01T00:00:00.000Z",
+            updatedAt: "2020-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    const page = frames[0];
+    if (page?.type !== "candidates") throw new Error(JSON.stringify(frames));
+    assert.deepEqual(
+      page.candidates.map((candidate) => [candidate.name, candidate.folderName, candidate.existing]),
+      [["ce-review", "CE Review", "managed"]],
+    );
+
+    session.install(["skills/ce-review/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.replaced, ["ce-review"]);
+    assert.match(
+      await readFile(join(harness.paths.managedDirectory, "CE Review", "SKILL.md"), "utf8"),
+      /name: ce-review/,
+    );
+    await assert.rejects(readdir(join(harness.paths.managedDirectory, "ce-review")), /ENOENT/);
+    const lock = await readJson(harness.paths.lockfilePath);
+    const entry = lock["skills"] as Record<string, Record<string, unknown>>;
+    assert.deepEqual(Object.keys(entry), ["CE Review"]);
+    assert.equal(entry["CE Review"]?.["installedAt"], "2020-01-01T00:00:00.000Z");
+
+    await session.dispose();
+  });
+});
+
+test("duplicate sanitised names fail before any copy or lock write", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "My Skill", description: "First", folder: "first" },
+      { name: "my-skill", description: "Second", folder: "second" },
+    ]);
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/first/SKILL.md", "skills/second/SKILL.md"]);
+    const error = await waitForError(frames);
+
+    assert.equal(error.error.code, "invalid-input");
+    assert.match(error.error.message, /install folder/i);
+    await assert.rejects(readdir(harness.paths.managedDirectory), /ENOENT/);
+    await assert.rejects(readFile(harness.paths.lockfilePath), /ENOENT/);
+    assert.equal(frames.some((frame) => frame.type === "done"), false);
+
+    await session.dispose();
+  });
+});
+
+test("the copy skips symlinks, .git, and node_modules and preserves file modes", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const { exec } = createLocalExec(async (request) => {
+      const args = request.args ?? [];
+      if (args[0] !== "clone") return null;
+      const result = await runProcess(request);
+      if (result.exitCode !== 0) return result;
+      const skill = join(String(args.at(-1)), "skills", "alpha");
+      await mkdir(join(skill, ".git"), { recursive: true });
+      await writeFile(join(skill, ".git", "HEAD"), "ref: refs/heads/main\n");
+      await mkdir(join(skill, "node_modules", "pkg"), { recursive: true });
+      await writeFile(join(skill, "node_modules", "pkg", "index.js"), "x\n");
+      await symlink("/etc/hostname", join(skill, "escape"));
+      await symlink("SKILL.md", join(skill, "inside-link"));
+      await writeFile(join(skill, "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+      await mkdir(join(skill, "docs"), { recursive: true });
+      await writeFile(join(skill, "docs", "guide.md"), "guide\n", { mode: 0o640 });
+      return result;
+    });
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    await waitForDone(frames);
+
+    const target = join(harness.paths.managedDirectory, "alpha");
+    assert.deepEqual((await readdir(target)).sort(), ["SKILL.md", "docs", "run.sh"]);
+    await assert.rejects(readFile(join(target, "escape")), /ENOENT/);
+    await assert.rejects(readFile(join(target, "inside-link")), /ENOENT/);
+    assert.equal((await stat(join(target, "run.sh"))).mode & 0o111, 0o111);
+    assert.equal((await stat(join(target, "docs", "guide.md"))).mode & 0o777, 0o640);
+    assert.equal(await readFile(join(target, "docs", "guide.md"), "utf8"), "guide\n");
+
+    await session.dispose();
+  });
+});
+
+test("a copy failure leaves the previous install and its lock entry intact", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    await mkdir(join(harness.paths.managedDirectory, "alpha"), { recursive: true });
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "SKILL.md"), "old body\n");
+    await writeFile(join(harness.paths.managedDirectory, "alpha", "stale.txt"), "keep me\n");
+    const originalLock = {
+      version: 3,
+      skills: {
+        alpha: {
+          source: "owner/old",
+          sourceType: "github",
+          sourceUrl: "https://github.com/owner/old.git",
+          skillPath: "skills/alpha/SKILL.md",
+          skillFolderHash: "a".repeat(40),
+          installedAt: "2020-01-01T00:00:00.000Z",
+          updatedAt: "2020-01-02T00:00:00.000Z",
+        },
+      },
+      dismissed: {},
+    };
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(harness.paths.lockfilePath, JSON.stringify(originalLock));
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec);
+    await session.settled;
+
+    const clone = session.cloneDirectory();
+    assert.ok(clone !== null);
+    await rm(join(clone, "skills", "alpha"), { recursive: true, force: true });
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, []);
+    assert.deepEqual(done.replaced, []);
+    assert.deepEqual(done.failed.map((failure) => failure.name), ["alpha"]);
+    const target = join(harness.paths.managedDirectory, "alpha");
+    assert.equal(await readFile(join(target, "SKILL.md"), "utf8"), "old body\n");
+    assert.equal(await readFile(join(target, "stale.txt"), "utf8"), "keep me\n");
+    assert.deepEqual(await readdir(harness.paths.managedDirectory), ["alpha"]);
+    assert.deepEqual(await readJson(harness.paths.lockfilePath), originalLock);
+
+    await session.dispose();
+  });
+});
+
+test("a throwing lock write fails only that skill and still sends done", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+      { name: "beta", description: "Beta skill", folder: "beta" },
+    ]);
+    const { exec } = createLocalExec();
+    let writes = 0;
+    const failingMutate: typeof mutateLockfile = async (path, mutate) => {
+      writes += 1;
+      if (writes === 2) throw new Error("disk full");
+      return mutateLockfile(path, mutate);
+    };
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      const { session, frames } = startAdd(harness, source, exec, started.signal, {
+        mutateLock: failingMutate,
+      });
+      await session.settled;
+
+      session.install(["skills/alpha/SKILL.md", "skills/beta/SKILL.md"]);
+      const done = await waitForDone(frames);
+
+      assert.deepEqual(done.installed, ["alpha"], "the earlier success stays installed");
+      assert.deepEqual(done.replaced, []);
+      assert.deepEqual(done.failed.map((failure) => failure.name), ["beta"]);
+      assert.match(done.failed[0]?.message ?? "", /disk full/);
+      assert.match(
+        await readFile(join(harness.paths.managedDirectory, "alpha", "SKILL.md"), "utf8"),
+        /name: alpha/,
+      );
+      const lock = await readJson(harness.paths.lockfilePath);
+      assert.deepEqual(Object.keys(lock["skills"] as Record<string, unknown>), ["alpha"]);
+      await assert.rejects(readdir(join(harness.paths.managedDirectory, "beta")), /ENOENT/);
+      assert.deepEqual(
+        (await readdir(harness.paths.managedDirectory)).sort(),
+        ["alpha"],
+        "no staging or backup directory remains",
+      );
+
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(rejections, [], "the install promise rejection is handled");
+
+      await session.dispose();
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+});
+
+test("a failed lock write after a swap restores the previous install and its lock entry", async () => {
+  await withHarness(async (harness) => {
+    const source = await createSourceRepo(harness, [
+      { name: "alpha", description: "Alpha skill", folder: "alpha" },
+    ]);
+    const target = join(harness.paths.managedDirectory, "alpha");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "SKILL.md"), "old body\n");
+    await writeFile(join(target, "stale.txt"), "keep me\n");
+    const originalLock = {
+      version: 3,
+      skills: {
+        alpha: {
+          source: "owner/old",
+          sourceType: "github",
+          sourceUrl: "https://github.com/owner/old.git",
+          skillPath: "skills/alpha/SKILL.md",
+          skillFolderHash: "a".repeat(40),
+          installedAt: "2020-01-01T00:00:00.000Z",
+          updatedAt: "2020-01-02T00:00:00.000Z",
+        },
+      },
+      dismissed: {},
+    };
+    await mkdir(dirname(harness.paths.lockfilePath), { recursive: true });
+    await writeFile(harness.paths.lockfilePath, JSON.stringify(originalLock));
+    const failingMutate: typeof mutateLockfile = async () => {
+      throw new Error("the lock is read-only");
+    };
+    const { exec } = createLocalExec();
+    const { session, frames } = startAdd(harness, source, exec, started.signal, {
+      mutateLock: failingMutate,
+    });
+    await session.settled;
+
+    session.install(["skills/alpha/SKILL.md"]);
+    const done = await waitForDone(frames);
+
+    assert.deepEqual(done.installed, []);
+    assert.deepEqual(done.replaced, []);
+    assert.deepEqual(done.failed.map((failure) => failure.name), ["alpha"]);
+    assert.match(done.failed[0]?.message ?? "", /read-only/);
+    assert.equal(await readFile(join(target, "SKILL.md"), "utf8"), "old body\n");
+    assert.equal(await readFile(join(target, "stale.txt"), "utf8"), "keep me\n");
+    assert.deepEqual(await readdir(harness.paths.managedDirectory), ["alpha"]);
+    assert.deepEqual(await readJson(harness.paths.lockfilePath), originalLock);
+
+    await session.dispose();
+  });
+});
+
+test("the copier refuses a destination outside the managed directory or through a symlink", async () => {
+  await withHarness(async (harness) => {
+    const source = join(harness.fixtureRoot, "source-skill");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "---\nname: x\n---\n");
+    const signal = new AbortController().signal;
+
+    const escape = await installSkillDirectory(
+      harness.paths.managedDirectory,
+      "../escape",
+      source,
+      signal,
+    );
+    assert.equal(escape.ok, false);
+    if (!escape.ok) assert.equal(escape.error.code, "unsafe-path");
+    await assert.rejects(readdir(join(harness.home, "escape")), /ENOENT/);
+
+    const outside = join(harness.home, "outside");
+    await mkdir(outside, { recursive: true });
+    await mkdir(harness.paths.managedDirectory, { recursive: true });
+    await symlink(outside, join(harness.paths.managedDirectory, "linked"));
+    const linked = await installSkillDirectory(
+      harness.paths.managedDirectory,
+      "linked",
+      source,
+      signal,
+    );
+    assert.equal(linked.ok, false);
+    if (!linked.ok) assert.equal(linked.error.code, "unsafe-path");
+    assert.deepEqual(await readdir(outside), []);
   });
 });

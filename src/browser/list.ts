@@ -46,6 +46,12 @@ export function renderSkillList(
   `;
 }
 
+/** Forget the cached list so the next render re-reads the machine after a mutation. */
+export function refreshSkillList(context: WorkspacePanelContext): void {
+  lists.delete(context.machine.id);
+  context.host.requestRender();
+}
+
 function renderList(
   html: HtmlTemplateTag,
   state: ListState,

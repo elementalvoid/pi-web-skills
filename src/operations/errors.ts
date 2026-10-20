@@ -18,11 +18,11 @@ export type OperationErrorCode =
   | "auth-required"
   | "folder-hash-failed"
   | "discovery-failed"
+  | "install-failed"
   | "skill-not-found"
   | "not-found"
   | "not-managed"
-  | "remove-failed"
-  | "not-implemented";
+  | "remove-failed";
 
 export type OperationError = {
   readonly code: OperationErrorCode;

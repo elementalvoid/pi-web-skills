@@ -7,7 +7,7 @@ src/
 │   └── add-panel.ts      Add source, candidates, and selection
 ├── server.ts             PI WEB server entry; peer requests and channels
 ├── operations/
-│   ├── add.ts            resolve source -> discover -> candidates session
+│   ├── add.ts            resolve source -> discover -> install session
 │   ├── add-channel.ts    add channel adapter over the add session
 │   ├── list.ts           present + lock -> managed / unmanaged / broken
 │   ├── update.ts         remote hash vs lock -> replace changed installs

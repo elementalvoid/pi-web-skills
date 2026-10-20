@@ -26,7 +26,7 @@ export type AddPeerChannel = {
 };
 
 type AddChannelFrame =
-  | { readonly type: "install"; readonly names: readonly string[] }
+  | { readonly type: "install"; readonly sourcePaths: readonly string[] }
   | { readonly type: "cancel" };
 
 /**
@@ -94,7 +94,7 @@ export function openAddChannel(
         active.cancel();
         return;
       }
-      active.install(frame.names);
+      active.install(frame.sourcePaths);
     },
     async close() {
       closed = true;
@@ -124,7 +124,9 @@ function readFrame(data: JsonValue): AddChannelFrame | null {
   const record = data as { readonly [key: string]: JsonValue };
   if (record["type"] === "cancel" && Object.keys(record).length === 1) return { type: "cancel" };
   if (record["type"] !== "install") return null;
-  const names = record["names"];
-  if (!Array.isArray(names) || !names.every((name) => typeof name === "string")) return null;
-  return { type: "install", names };
+  const sourcePaths = record["sourcePaths"];
+  if (!Array.isArray(sourcePaths) || !sourcePaths.every((value) => typeof value === "string")) {
+    return null;
+  }
+  return { type: "install", sourcePaths };
 }
