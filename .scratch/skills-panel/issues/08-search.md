@@ -45,3 +45,23 @@
 - Abort is represented as the stable `cancelled` code at the peer seam, so the panel can distinguish it from a failure; the browser also treats an `AbortError` rejection as a cancellation.
 - The Add handoff relies on the render cycle: Search sets the pending handoff and requests a render; the Add panel consumes it on its next render. No new peer operation or channel frame is involved.
 - The query is trimmed at the request boundary, so the operation seam always receives a clean, non-empty keyword.
+
+## Comments
+
+Review fixes on `ticket/08-fix`, after merging `integration/skills-panel`:
+
+- Search and Add request a render when their inputs change, so the host re-renders and the submit buttons enable after typing. The Add panel also requests a render once an open is pending, so Cancel can appear while the open is still in flight.
+- A search row whose sanitised `id`, `name`, or `source` is empty is dropped, so no row hands an empty source to Add.
+- A failed or cancelled resolve clears the handoff's wanted skill, so a later manual resolve cannot preselect a skill the failed handoff asked for.
+- The Add handoff is a box keyed by machine and workspace (`addHandoffKey`). `take` reads and clears it, so workspace A's handoff is never consumed by workspace B and a consumed handoff cannot resolve twice.
+- Consuming the handoff no longer calls `resolve()` inside the render pass: the panel prefills the source and queues the resolve with `queueMicrotask`, so the current render returns first.
+- The 8 s timeout now covers the body read as well as the request: `readBody` races `response.json()` against the same abort signal, so a stalled body returns the retryable `search-unavailable` timeout error.
+- `SEARCH_BASE_URL`, `SEARCH_RESULT_LIMIT`, and `SEARCH_TIMEOUT_MS` are module-internal (no test imported them). `FetchResponse` no longer carries `ok`; the operation trusts the HTTP `status`, and the production adapter passes only `status` and `json`.
+
+Tests added: input render assertions for Search and Add; a render after a pending open shows Cancel; empty-sanitised rows dropped; failed and cancelled handoff resolves preselect nothing next time; a handoff stays in its machine and workspace and is cleared when consumed; the handoff resolve starts after the render pass; a stalled response body times out.
+
+Commands after the merge:
+
+- `npm run build` — pass.
+- `npm run typecheck` — pass.
+- `npm test` — pass: 193 tests, 0 failures.
