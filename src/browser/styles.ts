@@ -197,18 +197,18 @@ export function renderSkillsStyles(
       accent-color: var(--pi-accent);
     }
     .skills-panel button {
-      padding: 5px 10px;
+      padding: 5px 9px;
       border: 1px solid var(--pi-border);
       border-radius: 7px;
-      background: var(--pi-bg-overlay);
+      background: var(--pi-surface);
       color: var(--pi-text);
       font: inherit;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
     }
     .skills-panel button:hover:not(:disabled) {
-      border-color: var(--pi-accent-border);
+      border-color: var(--pi-border);
       background: var(--pi-surface-hover);
     }
     .skills-panel button:focus-visible {
@@ -221,21 +221,21 @@ export function renderSkillsStyles(
     }
     .skills-panel button.skills-primary {
       border-color: var(--pi-accent-border);
-      background: var(--pi-accent);
-      color: var(--pi-accent-contrast);
+      background: var(--pi-surface);
+      color: var(--pi-accent);
     }
     .skills-panel button.skills-primary:hover:not(:disabled) {
-      background: var(--pi-accent);
-      filter: brightness(1.08);
+      border-color: var(--pi-accent);
+      background: var(--pi-selection-bg);
     }
     .skills-panel button.skills-danger {
-      border-color: var(--pi-danger);
-      background: transparent;
+      border-color: var(--pi-border);
+      background: var(--pi-surface);
       color: var(--pi-danger);
     }
     .skills-panel button.skills-danger:hover:not(:disabled) {
-      background: var(--pi-warning-surface);
-      border-color: var(--pi-danger);
+      border-color: var(--pi-border);
+      background: color-mix(in srgb, var(--pi-danger) 14%, transparent);
     }
     .skills-panel button.skills-ghost {
       border-color: transparent;
@@ -243,7 +243,7 @@ export function renderSkillsStyles(
       color: var(--pi-text-secondary);
     }
     .skills-panel button.skills-ghost:hover:not(:disabled) {
-      border-color: var(--pi-border);
+      border-color: var(--pi-border-muted);
       background: var(--pi-bg-overlay);
       color: var(--pi-text);
     }
@@ -255,36 +255,36 @@ export function renderSkillsStyles(
     .skills-panel .skills-chip {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 3px 9px;
-      border: 1px solid var(--pi-border);
+      gap: 6px;
+      padding: 2px 8px;
+      border: 1px solid var(--pi-border-muted);
       border-radius: 999px;
-      background: var(--pi-bg);
+      background: var(--pi-surface);
       color: var(--pi-text-secondary);
       font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      font-weight: 500;
+      letter-spacing: 0;
       white-space: nowrap;
     }
+    .skills-panel .skills-chip::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: none;
+      border-radius: 50%;
+      background: var(--skills-chip-dot, var(--pi-muted));
+    }
     .skills-panel .skills-chip-managed {
-      border-color: var(--pi-success-border);
-      background: var(--pi-success-surface);
-      color: var(--pi-success);
+      --skills-chip-dot: var(--pi-success);
     }
     .skills-panel .skills-chip-unmanaged {
-      border-color: var(--pi-purple-border);
-      background: var(--pi-purple-surface);
-      color: var(--pi-purple);
+      --skills-chip-dot: var(--pi-purple);
     }
     .skills-panel .skills-chip-broken {
-      border-color: var(--pi-warning-border);
-      background: var(--pi-warning-surface);
-      color: var(--pi-warning);
+      --skills-chip-dot: var(--pi-warning);
     }
     .skills-panel .skills-chip-invalid {
-      border-color: var(--pi-danger);
-      background: transparent;
-      color: var(--pi-danger);
+      --skills-chip-dot: var(--pi-danger);
     }
     .skills-panel label.skills-select-all {
       display: flex;
@@ -303,24 +303,27 @@ export function renderSkillsStyles(
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 10px 12px;
-      border: 1px solid var(--pi-success-border);
-      border-radius: 9px;
-      background: var(--pi-success-surface);
+      padding: 9px 11px;
+      border: 1px solid var(--pi-border);
+      border-left: 3px solid var(--pi-success);
+      border-radius: 8px;
+      background: var(--pi-bg-overlay);
       color: var(--pi-text);
     }
     .skills-panel .skills-alert {
-      padding: 10px 12px;
-      border: 1px solid var(--pi-danger);
-      border-radius: 9px;
-      background: var(--pi-warning-surface);
+      padding: 9px 11px;
+      border: 1px solid var(--pi-border);
+      border-left: 3px solid var(--pi-danger);
+      border-radius: 8px;
+      background: var(--pi-bg-overlay);
       color: var(--pi-text);
     }
     .skills-panel .skills-warning {
-      padding: 10px 12px;
-      border: 1px solid var(--pi-warning-border);
-      border-radius: 9px;
-      background: var(--pi-warning-surface);
+      padding: 9px 11px;
+      border: 1px solid var(--pi-border);
+      border-left: 3px solid var(--pi-warning);
+      border-radius: 8px;
+      background: var(--pi-bg-overlay);
       color: var(--pi-text);
     }
     .skills-panel .skills-loading {
@@ -357,15 +360,12 @@ export function renderSkillsStyles(
       gap: 6px;
       padding: 10px 12px;
       border: 1px solid var(--pi-border);
-      border-left: 4px solid var(--pi-border);
+      border-left: 3px solid var(--pi-border-muted);
       border-radius: 9px;
       background: var(--pi-bg);
     }
     .skills-panel .skills-row-managed {
       border-left-color: var(--pi-success);
-    }
-    .skills-panel .skills-row-unmanaged {
-      border-left-color: var(--pi-purple);
     }
     .skills-panel .skills-row-broken {
       border-left-color: var(--pi-warning);
@@ -393,11 +393,14 @@ export function renderSkillsStyles(
       align-items: center;
       gap: 5px;
       width: max-content;
-      color: var(--pi-accent);
+      color: var(--pi-text-secondary);
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
       list-style: none;
+    }
+    .skills-panel .skills-details > summary:hover {
+      color: var(--pi-text);
     }
     .skills-panel .skills-details > summary::-webkit-details-marker {
       display: none;
@@ -487,9 +490,10 @@ export function renderSkillsStyles(
       padding: 2px 8px;
       border: 1px solid var(--pi-warning-border);
       border-radius: 999px;
-      background: var(--pi-warning-surface);
+      background: var(--pi-bg-overlay);
       color: var(--pi-warning);
       font-size: 11px;
+      font-weight: 500;
     }
     .skills-panel .skills-results {
       display: grid;

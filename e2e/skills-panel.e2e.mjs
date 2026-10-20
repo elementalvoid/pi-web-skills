@@ -101,6 +101,9 @@ try {
   await page.getByRole("heading", { name: "Unmanaged skills (3)", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Broken entries (1)", exact: true }).waitFor();
   await page.getByText("Invalid frontmatter: description is missing", { exact: false }).waitFor();
+  if (process.env.E2E_SCREENSHOT !== undefined) {
+    await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: true });
+  }
   const unmanaged = page.getByRole("heading", { name: /^Unmanaged skills/ }).locator("..");
   assert.equal(
     await unmanaged.getByRole("button", { name: "Remove", exact: true }).count(),
