@@ -28,7 +28,7 @@ test("a plain folder name resolves inside the managed directory", async () => {
   await withRoots(async ({ managedDirectory }) => {
     assert.deepEqual(resolveManagedPath(managedDirectory, "demo"), {
       ok: true,
-      path: join(managedDirectory, "demo"),
+      value: join(managedDirectory, "demo"),
     });
   });
 });
@@ -51,7 +51,7 @@ test("a real skill directory is accepted", async () => {
 
     assert.deepEqual(await assertSafeSkillDirectory(managedDirectory, "demo"), {
       ok: true,
-      path: join(managedDirectory, "demo"),
+      value: join(managedDirectory, "demo"),
     });
   });
 });
@@ -60,7 +60,7 @@ test("a missing skill directory still resolves, so a broken entry can be cleaned
   await withRoots(async ({ managedDirectory }) => {
     assert.deepEqual(await assertSafeSkillDirectory(managedDirectory, "gone"), {
       ok: true,
-      path: join(managedDirectory, "gone"),
+      value: join(managedDirectory, "gone"),
     });
   });
 });
@@ -102,5 +102,72 @@ test("the temp root itself is never removed", async () => {
   await withRoots(async ({ tempRoot }) => {
     assert.equal(await removeTempDirectory(tempRoot, tempRoot), false);
     assert.equal((await stat(tempRoot)).isDirectory(), true);
+  });
+});
+
+test("a managed directory that is a symlink is followed to its real directory", async () => {
+  await withRoots(async ({ root, managedDirectory }) => {
+    const realManaged = join(root, "real-managed");
+    await mkdir(join(realManaged, "demo"), { recursive: true });
+    await rm(managedDirectory, { recursive: true, force: true });
+    await symlink(realManaged, managedDirectory);
+
+    assert.deepEqual(await assertSafeSkillDirectory(managedDirectory, "demo"), {
+      ok: true,
+      value: join(realManaged, "demo"),
+    });
+  });
+});
+
+test("a missing skill under a symlinked managed directory resolves inside the real root", async () => {
+  await withRoots(async ({ root, managedDirectory }) => {
+    const realManaged = join(root, "real-managed");
+    await mkdir(realManaged);
+    await rm(managedDirectory, { recursive: true, force: true });
+    await symlink(realManaged, managedDirectory);
+
+    assert.deepEqual(await assertSafeSkillDirectory(managedDirectory, "gone"), {
+      ok: true,
+      value: join(realManaged, "gone"),
+    });
+  });
+});
+
+test("a child symlink that escapes a symlinked managed root is refused", async () => {
+  await withRoots(async ({ root, managedDirectory }) => {
+    const realManaged = join(root, "real-managed");
+    const outside = join(root, "outside");
+    await mkdir(realManaged);
+    await mkdir(outside);
+    await rm(managedDirectory, { recursive: true, force: true });
+    await symlink(realManaged, managedDirectory);
+    await symlink(outside, join(realManaged, "linked"));
+
+    const result = await assertSafeSkillDirectory(managedDirectory, "linked");
+
+    assert.equal(result.ok, false);
+    assert.equal(result.ok === false && result.error.code, "unsafe-path");
+  });
+});
+
+test("temp cleanup refuses a path that escapes through a symlinked component", async () => {
+  await withRoots(async ({ root, tempRoot }) => {
+    const precious = join(root, "outside", "precious");
+    await mkdir(precious, { recursive: true });
+    await symlink(join(root, "outside"), join(tempRoot, "link"));
+
+    assert.equal(await removeTempDirectory(tempRoot, join(tempRoot, "link", "precious")), false);
+    assert.equal((await stat(precious)).isDirectory(), true);
+  });
+});
+
+test("temp cleanup refuses a symlink whose target escapes the temp root", async () => {
+  await withRoots(async ({ root, tempRoot }) => {
+    const outside = join(root, "outside");
+    await mkdir(outside);
+    await symlink(outside, join(tempRoot, "link"));
+
+    assert.equal(await removeTempDirectory(tempRoot, join(tempRoot, "link")), false);
+    assert.equal((await stat(outside)).isDirectory(), true);
   });
 });

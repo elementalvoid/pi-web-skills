@@ -1,11 +1,9 @@
-import { lstat, rm } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { OperationError } from "./errors.ts";
+import { lstat, realpath, rm } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { Result } from "./errors.ts";
 import { operationError } from "./errors.ts";
 
-export type PathCheck =
-  | { readonly ok: true; readonly path: string }
-  | { readonly ok: false; readonly error: OperationError };
+export type PathCheck = Result<string>;
 
 /** Resolve one skill folder name inside the managed directory; escapes are unsafe-path. */
 export function resolveManagedPath(managedDirectory: string, folderName: string): PathCheck {
@@ -17,38 +15,79 @@ export function resolveManagedPath(managedDirectory: string, folderName: string)
   if (!isStrictlyInside(root, path)) {
     return unsafePath(`${path} is outside ${root}`);
   }
-  return { ok: true, path };
+  return { ok: true, value: path };
 }
 
 /**
- * Resolve a skill folder and refuse a symlinked entry. A missing folder is
- * accepted: a broken entry still needs its stale lock entry cleaned up.
+ * Resolve a skill folder through symlinks and refuse anything that leaves the
+ * real managed directory. A missing folder is accepted: a broken entry still
+ * needs its stale lock entry cleaned up. A managed directory that is itself a
+ * symlink is allowed; the returned path is the real one removal must use.
  */
 export async function assertSafeSkillDirectory(
   managedDirectory: string,
   folderName: string,
 ): Promise<PathCheck> {
-  const resolved = resolveManagedPath(managedDirectory, folderName);
-  if (!resolved.ok) return resolved;
+  const lexical = resolveManagedPath(managedDirectory, folderName);
+  if (!lexical.ok) return lexical;
+
+  let root: string;
+  let target: string;
   try {
-    if ((await lstat(resolved.path)).isSymbolicLink()) {
-      return unsafePath(`${resolved.path} is a symlink`);
+    root = await resolveRealPath(resolve(managedDirectory));
+    target = await resolveRealPath(lexical.value);
+  } catch (error) {
+    return unsafePath(`Cannot resolve ${lexical.value}: ${String(error)}`);
+  }
+  if (!isStrictlyInside(root, target)) {
+    return unsafePath(`${lexical.value} resolves to ${target}, outside ${root}`);
+  }
+
+  try {
+    if ((await lstat(lexical.value)).isSymbolicLink()) {
+      return unsafePath(`${lexical.value} is a symlink`);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      return unsafePath(`Cannot inspect ${resolved.path}: ${String(error)}`);
+      return unsafePath(`Cannot inspect ${lexical.value}: ${String(error)}`);
     }
   }
-  return resolved;
+  return { ok: true, value: target };
 }
 
-/** Delete a temp directory only when it resolves strictly inside the temp root. */
+/** Delete a temp directory only when its real path stays inside the real temp root. */
 export async function removeTempDirectory(tempRoot: string, candidate: string): Promise<boolean> {
-  const root = resolve(tempRoot);
-  const target = resolve(candidate);
+  let root: string;
+  let target: string;
+  try {
+    root = await resolveRealPath(resolve(tempRoot));
+    target = await resolveRealPath(resolve(candidate));
+  } catch {
+    return false;
+  }
   if (!isStrictlyInside(root, target)) return false;
-  await rm(target, { recursive: true, force: true });
+  await rm(resolve(candidate), { recursive: true, force: true });
   return true;
+}
+
+/**
+ * Resolve an existing path with `realpath`; for a missing path, resolve the
+ * nearest existing ancestor and reattach the missing segments.
+ */
+async function resolveRealPath(path: string): Promise<string> {
+  const missing: string[] = [];
+  let current = resolve(path);
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missing);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      missing.unshift(basename(current));
+      current = parent;
+    }
+  }
 }
 
 function isSingleSegment(folderName: string): boolean {
