@@ -84,29 +84,31 @@ export function createSearchPanel(
     };
 
     const renderState = (): Template => {
-      if (loading) return html`<p aria-live="polite">Searching skills.sh…</p>`;
-      if (state.phase === "error") return html`<p role="alert">${state.message}</p>`;
+      if (loading) return html`<p class="skills-message" aria-live="polite">Searching skills.sh…</p>`;
+      if (state.phase === "error") return html`<p class="skills-alert" role="alert">${state.message}</p>`;
       if (state.phase === "cancelled") {
-        return html`<p role="status">The search was cancelled.</p>`;
+        return html`<p class="skills-message" role="status">The search was cancelled.</p>`;
       }
       if (state.phase === "idle") {
-        return html`<p>
+        return html`<p class="skills-message">
           Search skills.sh by keyword to find a source. Searching never changes what is
           installed.
         </p>`;
       }
       if (state.results.length === 0) {
-        return html`<p>No skills found for ${state.query.trim()}. Try another keyword.</p>`;
+        return html`<p class="skills-message">No skills found for ${state.query.trim()}. Try another keyword.</p>`;
       }
       return html`
-        <ul>
+        <ul class="skills-results">
           ${state.results.map(
             (result) => html`
-              <li>
+              <li class="skills-result">
                 <strong>${result.name}</strong>
                 <code>${result.source}</code>
-                <span>${result.installs} installs</span>
-                <button type="button" @click=${() => add(result)}>Add ${result.name}</button>
+                <span class="skills-installs">${result.installs} installs</span>
+                <button type="button" class="skills-ghost" @click=${() => add(result)}>
+                  Add ${result.name}
+                </button>
               </li>
             `,
           )}
@@ -139,7 +141,9 @@ export function createSearchPanel(
               }}
             />
           </label>
-          <button type="submit" ?disabled=${loading || state.query.trim() === ""}>Search</button>
+          <button type="submit" class="skills-primary" ?disabled=${loading || state.query.trim() === ""}>
+            Search
+          </button>
         </form>
         ${renderState()}
       </section>

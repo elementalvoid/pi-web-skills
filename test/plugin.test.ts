@@ -32,6 +32,15 @@ test("the browser entry contributes the Skills workspace panel", async () => {
   assert.equal(panels[0]?.title, "Skills");
 });
 
+test("the browser entry contributes an Open Skills action", async () => {
+  const result = await plugin.activate(activation);
+  const actions = result.contributions.actions ?? [];
+
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]?.id, "skills.open");
+  assert.equal(actions[0]?.title, "Open Skills");
+});
+
 test("package metadata declares the built dual entry with a narrow browser root", async () => {
   const contents = await readFile(new URL("../package.json", import.meta.url), "utf8");
   const manifest = JSON.parse(contents) as { readonly piWeb?: { readonly plugins?: readonly PluginEntry[] } };

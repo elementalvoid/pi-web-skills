@@ -42,10 +42,11 @@ function clearRowActions(key: string): void {
   }
 }
 
-/** List section: managed, unmanaged, broken, and invalid rows, with Remove actions. */
+/** List section: managed, unmanaged, broken, and invalid rows, with details and actions. */
 export function renderSkillList(
   html: HtmlTemplateTag,
   context: WorkspacePanelContext,
+  onUpdateSkill?: (name: string) => void,
 ): ReturnType<HtmlTemplateTag> {
   const key = context.machine.id;
   let state = lists.get(key);
@@ -58,10 +59,11 @@ export function renderSkillList(
   return html`
     ${notice === undefined
       ? html``
-      : html`<p role="status">
-          ${notice}
+      : html`<p class="skills-notice" role="status">
+          <span>${notice}</span>
           <button
             type="button"
+            class="skills-ghost"
             @click=${() => {
               notices.delete(key);
               context.host.requestRender();
@@ -70,7 +72,7 @@ export function renderSkillList(
             Dismiss
           </button>
         </p>`}
-    ${renderList(html, state, context)}
+    ${renderList(html, state, context, onUpdateSkill)}
   `;
 }
 
@@ -91,14 +93,19 @@ function renderList(
   html: HtmlTemplateTag,
   state: ListState,
   context: WorkspacePanelContext,
+  onUpdateSkill?: (name: string) => void,
 ): ReturnType<HtmlTemplateTag> {
   if (state.kind === "loading") {
-    return html`<p aria-live="polite">Loading skills…</p>`;
+    return html`<p class="skills-loading" aria-live="polite">Loading skills…</p>`;
   }
   if (state.kind === "error") {
     return html`
-      <p role="alert">Skills unavailable: ${state.message}</p>
-      <button type="button" @click=${() => refreshSkillList(context)}>Retry</button>
+      <div class="skills-alert">
+        <p role="alert">Skills unavailable: ${state.message}</p>
+        <button type="button" class="skills-ghost" @click=${() => refreshSkillList(context)}>
+          Retry
+        </button>
+      </div>
     `;
   }
 
@@ -106,16 +113,24 @@ function renderList(
   const warning =
     list.lockWarning === null
       ? html``
-      : html`<p role="status">Lockfile warning: ${list.lockWarning}</p>`;
+      : html`<p class="skills-warning" role="status">Lockfile warning: ${list.lockWarning}</p>`;
   if (list.rows.length === 0) {
-    return html`${warning}<p>No skills found in the managed directory.</p>`;
+    return html`${warning}<div class="skills-empty">No skills found in the managed directory.</div>`;
   }
 
-  const summary = `${list.counts.managed} managed, ${list.counts.unmanaged} unmanaged, ${list.counts.broken} broken`;
   return html`
-    ${warning}
-    <p>${summary}</p>
-    ${GROUPS.map((group) => renderGroup(html, list.rows, group.state, group.title, context))}
+    <section aria-labelledby="skills-list-heading">
+      <h3 id="skills-list-heading">Installed skills</h3>
+      ${warning}
+      <div class="skills-stats" aria-label="Skill counts">
+        <span class="skills-chip skills-chip-managed">${list.counts.managed} managed</span>
+        <span class="skills-chip skills-chip-unmanaged">${list.counts.unmanaged} unmanaged</span>
+        <span class="skills-chip skills-chip-broken">${list.counts.broken} broken</span>
+      </div>
+      ${GROUPS.map((group) =>
+        renderGroup(html, list.rows, group.state, group.title, context, onUpdateSkill),
+      )}
+    </section>
   `;
 }
 
@@ -125,14 +140,15 @@ function renderGroup(
   state: SkillState,
   title: string,
   context: WorkspacePanelContext,
+  onUpdateSkill?: (name: string) => void,
 ): ReturnType<HtmlTemplateTag> {
   const group = rows.filter((row) => row.state === state);
   if (group.length === 0) return html``;
   return html`
-    <section>
-      <h3>${title} (${group.length})</h3>
-      <ul>
-        ${group.map((row) => renderRow(html, row, context))}
+    <section class="skills-group skills-group-${state}">
+      <h4>${title} (${group.length})</h4>
+      <ul class="skills-list">
+        ${group.map((row) => renderRow(html, row, context, onUpdateSkill))}
       </ul>
     </section>
   `;
@@ -142,28 +158,102 @@ function renderRow(
   html: HtmlTemplateTag,
   row: ListRow,
   context: WorkspacePanelContext,
+  onUpdateSkill?: (name: string) => void,
 ): ReturnType<HtmlTemplateTag> {
-  const details: string[] = [];
-  if (row.source !== null) details.push(`${row.sourceType ?? "source"} ${row.source}`);
-  if (row.ref !== null) details.push(`ref ${row.ref}`);
-  if (row.pluginName !== null) details.push(`plugin ${row.pluginName}`);
-  if (row.updatedAt !== null) details.push(`updated ${row.updatedAt}`);
+  const key = rowKey(context.machine.id, row);
+  const action = rowActions.get(key);
+  const confirming = action?.kind === "confirming";
+  const stateLabel =
+    row.state === "managed" ? "Managed" : row.state === "unmanaged" ? "Unmanaged" : "Broken";
+  const invalid =
+    row.invalidReason === null
+      ? html``
+      : html`<span class="skills-chip skills-chip-invalid">Invalid frontmatter</span>`;
+  const updateAction =
+    row.state === "managed" && onUpdateSkill !== undefined && !confirming
+      ? html`<button
+          type="button"
+          class="skills-primary"
+          @click=${() => onUpdateSkill(row.name)}
+        >
+          Update
+        </button>`
+      : html``;
+  const unmanagedNote =
+    row.state === "unmanaged"
+      ? html`<p>
+          Not tracked by the lockfile. This panel never updates or removes unmanaged skills;
+          Add can replace the folder only after an explicit overwrite confirmation.
+        </p>`
+      : html``;
   return html`
-    <li>
-      <strong>${row.name}</strong>
+    <li class="skills-row skills-row-${row.state}">
+      <div class="skills-row-header">
+        <span class="skills-row-title">${row.name}</span>
+        <span class="skills-chip skills-chip-${row.state}">${stateLabel}</span>
+        ${invalid}
+      </div>
+      ${row.description === ""
+        ? html``
+        : html`<p class="skills-description">${row.description}</p>`}
       ${row.invalidReason === null
         ? html``
-        : html`<span role="note">Invalid frontmatter: ${row.invalidReason}</span>`}
-      ${row.description === "" ? html`` : html`<p>${row.description}</p>`}
-      ${row.folderName === null
-        ? html`<p>Install directory is missing.</p>`
-        : html`<p><code>${row.folderName}</code></p>`}
-      ${details.length === 0 ? html`` : html`<p>${details.join(" · ")}</p>`}
-      ${row.state === "unmanaged"
-        ? html`<p>Not tracked by the lockfile; the panel cannot remove this skill.</p>`
-        : renderRemoveAction(html, row, context)}
+        : html`<p class="skills-warning" role="note">
+            Invalid frontmatter: ${row.invalidReason}
+          </p>`}
+      <details class="skills-details">
+        <summary>Details &amp; actions</summary>
+        <div class="skills-details-body">
+          ${row.description === "" ? html`` : html`<p>${row.description}</p>`}
+          ${row.folderName === null
+            ? html`<p>Install directory is missing.</p>`
+            : html``}
+          ${renderMeta(html, row)}
+          ${unmanagedNote}
+          ${row.state === "unmanaged"
+            ? html``
+            : html`<div class="skills-actions">
+                ${updateAction}
+                ${renderRemoveAction(html, row, context)}
+              </div>`}
+        </div>
+      </details>
     </li>
   `;
+}
+
+function renderMeta(
+  html: HtmlTemplateTag,
+  row: ListRow,
+): ReturnType<HtmlTemplateTag> {
+  const items: { label: string; value: unknown }[] = [];
+  if (row.source !== null) items.push({ label: "Source", value: html`<code>${row.source}</code>` });
+  if (row.sourceType !== null) items.push({ label: "Type", value: row.sourceType });
+  if (row.ref !== null) items.push({ label: "Ref", value: html`<code>${row.ref}</code>` });
+  if (row.folderName !== null) {
+    items.push({ label: "Folder", value: html`<code>${row.folderName}</code>` });
+  }
+  if (row.skillPath !== null) {
+    items.push({ label: "Skill path", value: html`<code>${row.skillPath}</code>` });
+  }
+  if (row.pluginName !== null) items.push({ label: "Plugin", value: row.pluginName });
+  if (row.installedAt !== null) {
+    items.push({ label: "Installed", value: formatTimestamp(row.installedAt) });
+  }
+  if (row.updatedAt !== null) {
+    items.push({ label: "Updated", value: formatTimestamp(row.updatedAt) });
+  }
+  if (items.length === 0) return html``;
+  return html`<dl class="skills-meta">
+    ${items.map((item) => html`<dt>${item.label}</dt><dd>${item.value}</dd>`)}
+  </dl>`;
+}
+
+/** Compact, deterministic display for a lock timestamp. */
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
 }
 
 /**
@@ -178,19 +268,19 @@ function renderRemoveAction(
   const key = rowKey(context.machine.id, row);
   const action = rowActions.get(key);
   if (action?.kind === "removing") {
-    return html`<p aria-live="polite">Removing…</p>`;
+    return html`<p class="skills-message" aria-live="polite">Removing…</p>`;
   }
   const failure =
-    action?.kind === "error" ? html`<p role="alert">${action.message}</p>` : html``;
+    action?.kind === "error" ? html`<p class="skills-alert" role="alert">${action.message}</p>` : html``;
 
   if (action?.kind !== "confirming") {
     if (row.state === "broken") {
-      return html`<button type="button" @click=${() => startRemove(context, key)}>
+      return html`<button type="button" class="skills-danger" @click=${() => startRemove(context, key)}>
         Remove entry
       </button>
       ${failure}`;
     }
-    return html`<button type="button" @click=${() => startRemove(context, key)}>
+    return html`<button type="button" class="skills-danger" @click=${() => startRemove(context, key)}>
       Remove
     </button>
     ${failure}`;
@@ -198,21 +288,43 @@ function renderRemoveAction(
 
   if (row.state === "broken") {
     return html`
-      <p role="alert">
-        Remove the stale lock entry for ${row.name}? Its install directory is already missing.
-      </p>
-      <button type="button" @click=${() => void confirmRemove(context, row, key)}>
-        Yes, remove entry
-      </button>
-      <button type="button" @click=${() => cancelRemove(context, key)}>Cancel</button>
-      ${failure}
+      <div class="skills-confirm">
+        <p role="alert">
+          Remove the stale lock entry for ${row.name}? Its install directory is already missing.
+        </p>
+        <div class="skills-actions">
+          <button
+            type="button"
+            class="skills-danger"
+            @click=${() => void confirmRemove(context, row, key)}
+          >
+            Yes, remove entry
+          </button>
+          <button type="button" class="skills-ghost" @click=${() => cancelRemove(context, key)}>
+            Cancel
+          </button>
+        </div>
+        ${failure}
+      </div>
     `;
   }
   return html`
-    <p role="alert">Remove ${row.name}? This deletes its directory and lock entry.</p>
-    <button type="button" @click=${() => void confirmRemove(context, row, key)}>Yes, remove</button>
-    <button type="button" @click=${() => cancelRemove(context, key)}>Cancel</button>
-    ${failure}
+    <div class="skills-confirm">
+      <p role="alert">Remove ${row.name}? This deletes its directory and lock entry.</p>
+      <div class="skills-actions">
+        <button
+          type="button"
+          class="skills-danger"
+          @click=${() => void confirmRemove(context, row, key)}
+        >
+          Yes, remove
+        </button>
+        <button type="button" class="skills-ghost" @click=${() => cancelRemove(context, key)}>
+          Cancel
+        </button>
+      </div>
+      ${failure}
+    </div>
   `;
 }
 

@@ -26,7 +26,14 @@ type UpdateState = {
   pending: AbortController | null;
   /** The skill whose `updating` frame arrived; the next frame proves its swap finished. */
   pendingUpdate: string | null;
+  /** null means every managed skill; a list means a per-row Update. */
+  pendingNames: string[] | null;
   reloadReminder: boolean;
+};
+
+export type UpdatePanel = ((context: WorkspacePanelContext) => Template) & {
+  /** Ask the panel to confirm an update for these names, or every managed skill. */
+  requestUpdate: (context: WorkspacePanelContext, names: readonly string[] | null) => void;
 };
 
 const CONFIRMATION =
@@ -38,7 +45,7 @@ const CONFIRMATION =
  */
 export function createUpdatePanel(
   html: HtmlTemplateTag,
-): (context: WorkspacePanelContext) => Template {
+): UpdatePanel {
   const states = new Map<string, UpdateState>();
 
   const stateFor = (context: WorkspacePanelContext): UpdateState => {
@@ -57,6 +64,7 @@ export function createUpdatePanel(
         channel: null,
         pending: null,
         pendingUpdate: null,
+        pendingNames: null,
         reloadReminder: false,
       };
       states.set(key, state);
@@ -64,7 +72,22 @@ export function createUpdatePanel(
     return state;
   };
 
-  return (context: WorkspacePanelContext): Template => {
+  const requestUpdate = (
+    context: WorkspacePanelContext,
+    names: readonly string[] | null,
+  ): void => {
+    const state = stateFor(context);
+    if (state.phase === "running") return;
+    state.phase = "confirming";
+    state.pendingNames = names === null || names.length === 0 ? null : [...names];
+    state.message =
+      state.pendingNames === null
+        ? "Update all managed skills?"
+        : `Update ${state.pendingNames.join(", ")}?`;
+    context.host.requestRender();
+  };
+
+  const panel = ((context: WorkspacePanelContext): Template => {
     const state = stateFor(context);
     const render = () => context.host.requestRender();
 
@@ -147,6 +170,7 @@ export function createUpdatePanel(
         state.phase = "done";
         state.current = null;
         state.pendingUpdate = null;
+        state.pendingNames = null;
         state.updated = [...new Set([...state.updated, ...frame.updated])];
         state.unchanged = [...new Set([...state.unchanged, ...frame.unchanged])];
         state.skipped = frame.skipped.length > 0 ? [...frame.skipped] : state.skipped;
@@ -159,6 +183,7 @@ export function createUpdatePanel(
       }
       state.phase = "error";
       state.message = frame.message;
+      state.pendingNames = null;
       closeChannel(state, "error");
       render();
     };
@@ -184,12 +209,14 @@ export function createUpdatePanel(
       closeChannel(state, "replaced");
       render();
 
+      const names = state.pendingNames;
+      state.pendingNames = null;
       const pending = new AbortController();
       state.pending = pending;
       try {
         const channel = await peer.openChannel(
           "update",
-          {},
+          names === null ? {} : { names },
           { onData: (data) => onFrame(data), signal: pending.signal },
         );
         if (state.pending === pending) state.pending = null;
@@ -219,6 +246,7 @@ export function createUpdatePanel(
     const cancel = () => {
       const pending = state.pending;
       state.pending = null;
+      state.pendingNames = null;
       pending?.abort();
       if (state.phase === "running") {
         state.channel?.send({ type: "cancel" });
@@ -248,25 +276,34 @@ export function createUpdatePanel(
 
         ${state.phase === "confirming"
           ? html`
+              <p>
+                ${state.pendingNames === null
+                  ? "Update all managed skills?"
+                  : `Update ${state.pendingNames.join(", ")}?`}
+              </p>
               <p>${CONFIRMATION}</p>
-              <button type="button" @click=${() => void start()}>Confirm update</button>
-              <button
-                type="button"
-                @click=${() => {
-                  state.phase = "idle";
-                  state.message = "Update was not started.";
-                  render();
-                }}
-              >
-                Cancel
-              </button>
+              <div class="skills-actions">
+                <button type="button" class="skills-primary" @click=${() => void start()}>
+                  Confirm update
+                </button>
+                <button
+                  type="button"
+                  class="skills-ghost"
+                  @click=${() => {
+                    state.phase = "idle";
+                    state.pendingNames = null;
+                    state.message = "Update was not started.";
+                    render();
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             `
           : state.phase === "running"
-            ? html`<button type="button" @click=${cancel}>Cancel</button>`
-            : html`<button type="button" @click=${() => {
-                state.phase = "confirming";
-                render();
-              }}>Update all</button>`}
+            ? html`<button type="button" class="skills-danger" @click=${cancel}>Cancel</button>`
+            : html`<button type="button" class="skills-primary" @click=${() =>
+                requestUpdate(context, null)}>Update all</button>`}
 
         ${hasResults
           ? html`
@@ -335,7 +372,10 @@ export function createUpdatePanel(
           : null}
       </section>
     `;
-  };
+  }) as UpdatePanel;
+
+  panel.requestUpdate = requestUpdate;
+  return panel;
 }
 
 type ServerFrame =

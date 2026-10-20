@@ -92,7 +92,7 @@ try {
   const panelUrl = `${baseUrl}/?project=e2e-project&workspace=${encodeURIComponent(String(workspaceId))}&view=workspace&tool=skills:skills`;
   await page.goto(panelUrl, { waitUntil: "load" });
   await page.getByRole("heading", { name: "Skills", exact: true }).waitFor({ timeout: 15_000 });
-  await page.getByText("manages skills for the whole machine, not for this workspace", { exact: false }).first().waitFor();
+  await page.getByText("Changes apply to every workspace on this machine", { exact: false }).first().waitFor();
   await page.getByText(managedDirectory, { exact: true }).waitFor();
   await page.getByText(lockfilePath, { exact: true }).waitFor();
 
@@ -148,6 +148,7 @@ try {
   // Remove the added skill through the row's confirmation.
   const managed = page.getByRole("heading", { name: /^Managed skills/ }).locator("..");
   const notesRow = managed.locator("li").filter({ hasText: "notes" });
+  await notesRow.getByText("Details & actions", { exact: true }).click();
   await notesRow.getByRole("button", { name: "Remove", exact: true }).click();
   await page.getByText("Remove notes?", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Yes, remove", exact: true }).click();
@@ -162,6 +163,7 @@ try {
 
   // Broken cleanup deletes only the stale lock entry.
   const broken = page.getByRole("heading", { name: /^Broken entries/ }).locator("..");
+  await broken.getByText("Details & actions", { exact: true }).click();
   await broken.getByRole("button", { name: "Remove entry" }).click();
   await page.getByText("already missing", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Yes, remove entry" }).click();

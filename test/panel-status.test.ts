@@ -171,10 +171,10 @@ test("the panel states its machine-wide scope before any status or list row", as
   await settle();
   const text = drawPanel(context);
 
-  assert.match(text, /manages skills for the whole machine, not for this workspace/);
+  assert.match(text, /Machine-wide/);
   assert.match(text, /every workspace on this machine/);
   assert.ok(
-    text.indexOf("whole machine") < text.indexOf("Managed directory"),
+    text.indexOf("Machine-wide") < text.indexOf("Managed directory"),
     "the scope notice comes before the resolved paths",
   );
 });

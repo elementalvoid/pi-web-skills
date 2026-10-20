@@ -44,28 +44,41 @@ export function renderMachineStatus(
     void loadStatus(context, key);
   }
   if (status.kind === "loading") {
-    return html`<p aria-live="polite">Loading machine status…</p>`;
+    return html`<p class="skills-loading" aria-live="polite">Loading machine status…</p>`;
   }
   if (status.kind === "error") {
     return html`
-      <p role="alert">Machine status unavailable: ${status.message}</p>
-      <button type="button" @click=${() => refreshMachineStatus(context)}>Retry</button>
+      <div class="skills-alert">
+        <p role="alert">Machine status unavailable: ${status.message}</p>
+        <button type="button" class="skills-ghost" @click=${() => refreshMachineStatus(context)}>
+          Retry
+        </button>
+      </div>
     `;
   }
   return html`
-    <dl>
-      <dt>Managed directory</dt>
-      <dd>
+    <div class="skills-paths">
+      <div class="skills-path">
+        <span class="skills-path-label">Managed directory</span>
         <code>${status.status.managedDirectory}</code>
-        — ${status.status.managedDirectoryExists ? "exists" : "missing"}
-      </dd>
-      <dt>Lockfile</dt>
-      <dd>
+        <span class="skills-path-state ${status.status.managedDirectoryExists ? "is-ok" : "is-warn"}">
+          ${status.status.managedDirectoryExists ? "exists" : "missing"}
+        </span>
+      </div>
+      <div class="skills-path">
+        <span class="skills-path-label">Lockfile</span>
         <code>${status.status.lockfilePath}</code>
-        — ${describeLock(status.status)}
-      </dd>
-    </dl>
+        <span class="skills-path-state ${describeLockClass(status.status)}">
+          ${describeLock(status.status)}
+        </span>
+      </div>
+    </div>
   `;
+}
+
+function describeLockClass(status: StatusPayload): string {
+  if (!status.lockfileExists) return "is-warn";
+  return status.lockReadable ? "is-ok" : "is-warn";
 }
 
 async function loadStatus(context: WorkspacePanelContext, key: string): Promise<void> {

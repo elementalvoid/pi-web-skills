@@ -322,13 +322,13 @@ export function createAddPanel(
               }}
             />
           </label>
-          <button type="submit" ?disabled=${busy || state.source.trim() === ""}>Resolve</button>
-          ${cancellable ? html`<button type="button" @click=${cancel}>Cancel</button>` : null}
+          <button type="submit" class="skills-primary" ?disabled=${busy || state.source.trim() === ""}>Resolve</button>
+          ${cancellable ? html`<button type="button" class="skills-ghost" @click=${cancel}>Cancel</button>` : null}
         </form>
 
         ${state.phase === "error"
-          ? html`<p role="alert">${state.message}</p>`
-          : html`<p role="status" aria-live="polite">${state.message}</p>`}
+          ? html`<p class="skills-alert" role="alert">${state.message}</p>`
+          : html`<p class="skills-message" role="status" aria-live="polite">${state.message}</p>`}
 
         ${state.candidates.length === 0
           ? null
@@ -338,7 +338,7 @@ export function createAddPanel(
                   ${String(state.candidates.length)} discovered
                   skill${state.candidates.length === 1 ? "" : "s"}
                 </legend>
-                <label>
+                <label class="skills-select-all">
                   <input
                     type="checkbox"
                     ?checked=${allSelected}
@@ -346,10 +346,10 @@ export function createAddPanel(
                   />
                   Select all
                 </label>
-                <ul>
+                <ul class="skills-candidates">
                   ${state.candidates.map(
                     (candidate) => html`
-                      <li>
+                      <li class="skills-candidate">
                         <label>
                           <input
                             type="checkbox"
@@ -361,12 +361,12 @@ export function createAddPanel(
                         <code>${candidate.folderName}</code>
                         ${candidate.existing === "none"
                           ? null
-                          : html`<span class="badge">
+                          : html`<span class="skills-badge">
                               ${candidate.existing === "managed"
                                 ? "Already installed — an overwrite confirmation will come before install"
                                 : "Unmanaged — an overwrite confirmation will come before install"}
                             </span>`}
-                        <p>${candidate.description}</p>
+                        <p class="skills-description">${candidate.description}</p>
                         <small>${candidate.sourcePath}</small>
                       </li>
                     `,
@@ -374,19 +374,21 @@ export function createAddPanel(
                 </ul>
               </fieldset>
               ${state.phase === "confirming"
-                ? html`<button type="button" @click=${sendInstall}>Overwrite and install</button>`
+                ? html`<button type="button" class="skills-primary" @click=${sendInstall}>Overwrite and install</button>`
                 : html`<button
                     type="button"
+                    class="skills-primary"
                     ?disabled=${busy || state.selected.size === 0 || state.channel === null}
                     @click=${install}
                   >
                     Install selected (${String(state.selected.size)})
                   </button>`}
               ${state.reloadReminder
-                ? html`<p role="status">
-                    Skills were installed. Run <code>/reload</code> so the agent picks them up.
+                ? html`<p class="skills-notice" role="status">
+                    <span>Skills were installed. Run <code>/reload</code> so the agent picks them up.</span>
                     <button
                       type="button"
+                      class="skills-ghost"
                       @click=${() => {
                         state.reloadReminder = false;
                         render();

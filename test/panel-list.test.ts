@@ -146,11 +146,14 @@ test("the list panel renders managed, unmanaged, broken, and invalid rows", asyn
   const text = draw(context);
 
   assert.equal(renders, 1);
-  assert.match(text, /1 managed, 2 unmanaged, 1 broken/);
+  assert.match(text, /1 managed/);
+  assert.match(text, /2 unmanaged/);
+  assert.match(text, /1 broken/);
   assert.match(text, /demo/);
   assert.match(text, /A managed skill/);
   assert.match(text, /owner\/repo/);
-  assert.match(text, /plugin group/);
+  assert.match(text, /Plugin/);
+  assert.match(text, /group/);
   assert.match(text, /notes/);
   assert.match(text, /half-written/);
   assert.match(text, /Invalid frontmatter: description is missing/);
@@ -231,7 +234,29 @@ test("an unmanaged row has no action and explains that the lockfile does not tra
 
   assert.doesNotMatch(text, /<button/);
   assert.match(text, /Not tracked by the lockfile/);
-  assert.match(text, /cannot remove/);
+  assert.match(text, /never updates or removes/);
+});
+
+test("a managed row offers per-skill Update and expandable details", async () => {
+  const context = panelContext(
+    "row-details-machine",
+    async () => ({ ok: true, value: payload }),
+    () => undefined,
+  );
+  draw(context);
+  await settle();
+
+  const updated: string[] = [];
+  const template = renderSkillList(html, context, (name) => {
+    updated.push(name);
+  }) as FakeTemplate;
+  const text = textOf(template);
+
+  assert.match(text, /<details/);
+  assert.match(text, /Details &amp; actions/);
+  assert.match(text, /skills-description/);
+  click(template, "Update");
+  assert.deepEqual(updated, ["demo"]);
 });
 
 test("Remove asks for an inline confirmation before any removal request", async () => {
@@ -294,7 +319,9 @@ test("confirming a removal sends the row name, refreshes the list, and shows the
   );
   assert.equal(listCalls, 2);
   assert.match(text, /\/reload/);
-  assert.match(text, /0 managed, 2 unmanaged, 1 broken/);
+  assert.match(text, /0 managed/);
+  assert.match(text, /2 unmanaged/);
+  assert.match(text, /1 broken/);
   assert.doesNotMatch(text, /<strong>demo<\/strong>/);
 });
 
@@ -405,9 +432,10 @@ test("the list panel renders a managed row's source, ref, and updated time", asy
 
   const text = draw(context);
 
-  assert.match(text, /github owner\/repo/);
-  assert.match(text, /ref main/);
-  assert.match(text, /updated 2026-01-02T00:00:00.000Z/);
+  assert.match(text, /owner\/repo/);
+  assert.match(text, /github/);
+  assert.match(text, /main/);
+  assert.match(text, /2026-01-02 00:00 UTC/);
 });
 
 test("the list panel renders an empty state when nothing is present", async () => {
@@ -657,7 +685,9 @@ test("a list error offers Retry and a retry reads the rows again", async () => {
 
   const text = draw(context);
   assert.equal(calls, 2);
-  assert.match(text, /1 managed, 2 unmanaged, 1 broken/);
+  assert.match(text, /1 managed/);
+  assert.match(text, /2 unmanaged/);
+  assert.match(text, /1 broken/);
 });
 
 test("the removal success notice is dismissible", async () => {
@@ -692,5 +722,7 @@ test("the removal success notice is dismissible", async () => {
   click(render(context), "Dismiss");
 
   assert.doesNotMatch(draw(context), /Run \/reload/);
-  assert.match(draw(context), /0 managed, 2 unmanaged, 1 broken/);
+  assert.match(draw(context), /0 managed/);
+  assert.match(draw(context), /2 unmanaged/);
+  assert.match(draw(context), /1 broken/);
 });

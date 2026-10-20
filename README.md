@@ -8,8 +8,10 @@ server entry. Upstream skills.sh behavior is the contract; the panel never runs 
 
 ## What the panel does
 
-Open the **Skills** tab in any workspace. The panel is hosted in a workspace but
-manages machine-wide state; it never reads or writes workspace files.
+Open the **Skills** tab in any workspace, or run **Open Skills** from the action
+palette. The panel is hosted in a workspace but manages machine-wide state; it
+never reads or writes workspace files. PI WEB's public plugin API has no
+Settings-pane contribution, so a Settings tab would require a PI WEB core change.
 
 It shows a machine-wide notice, the resolved managed directory
 (`<home>/.agents/skills`), and the resolved lockfile

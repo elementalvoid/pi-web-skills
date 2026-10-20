@@ -139,6 +139,30 @@ test("Update all confirms the local-edit risk before the channel opens", async (
   assert.deepEqual(host.inputs, [{}], "the panel updates every managed entry");
 });
 
+test("a per-row Update request confirms and sends only that skill", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const host: Host = {
+    channelOptions: [],
+    operations: [],
+    inputs: [],
+    channelOpen: async () => fakeChannel(sent, closeReasons),
+  };
+  const panel = createUpdatePanel(html);
+  const context = panelContext(host);
+
+  panel.requestUpdate(context, ["demo"]);
+  const confirming = textOf(panel(context));
+  assert.match(confirming, /Update demo\?/);
+  assert.match(confirming, /local edit/i);
+  assert.deepEqual(host.operations, [], "nothing starts before the confirmation");
+
+  click(panel(context), "Confirm update");
+  await tick();
+  assert.deepEqual(host.operations, ["update"]);
+  assert.deepEqual(host.inputs, [{ names: ["demo"] }]);
+});
+
 test("frames show per-skill progress and grouped results with the /reload reminder", async () => {
   const sent: JsonValue[] = [];
   const closeReasons: string[] = [];
