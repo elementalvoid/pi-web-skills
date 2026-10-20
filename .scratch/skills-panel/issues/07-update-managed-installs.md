@@ -50,3 +50,21 @@
 - The clone fallback reuses the entry's `sourceUrl` and `ref`, so a group pinned to a tag or commit updates from that exact ref. `source`/`sourceType`/unknown entry fields are preserved by the spread write.
 - `updatedAt` is written once per replaced skill inside the atomic-swap commit callback, so a failed copy or lock write rolls the swap back and leaves the previous install.
 - Ambiguous same-name matches (two paths with the locked name) are reported failed rather than relocated, because moving the wrong copy would overwrite the install.
+
+## Comments
+
+Review fixes on `ticket/07-fix`, after merging `integration/skills-panel`:
+
+- Cancelling Update keeps the skills that already updated. A replaced skill streams only `updating`, so the panel settles it as updated when the next progress frame arrives (or the final `done` frame confirms it) instead of waiting for the summary. On cancel the interrupted skill's swap may or may not have happened, so it is never counted as updated; the accumulated results are shown, the list refreshes when anything was replaced, and the `/reload` reminder appears.
+- Update resolves its install destination with `resolveInstallTarget`, the shared destination rule Add uses, instead of rebuilding `matchSkillName(...)?.folderName ?? sanitizeName(...)`.
+- Update reads present folders with List's `discoverSkillDirectories` instead of a top-level `readdir` duplicate, so nested installs match and the depth/exclusion rules stay shared.
+- The host tree reader is now `fetchGitHubTree`, so it cannot be confused with the vendored self-spawning `fetchRepoTree`.
+- `SKIP_REASONS.noHash` is now `privateOrDeleted`, matching the "Private or deleted repo" message it produces. The `mutateLock` failure seam stays.
+
+Test added: after two skills start updating, cancelling during the second keeps `Updated (1)`, never reports the interrupted skill as updated, and still shows the `/reload` reminder.
+
+Commands:
+
+- `npm run build` — pass.
+- `npm run typecheck` — pass.
+- `npm test` — pass, 187 tests total; 1 new.
