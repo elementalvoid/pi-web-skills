@@ -12,7 +12,8 @@
 - [ ] `src/README.md` matches the implemented module layout, including any protocol, session, or search modules added.
 - [ ] Panel review covers: machine-wide copy, loading, empty, error, invalid frontmatter, unmanaged read-only, broken cleanup, overwrite confirmation, update confirmation, cancel, partial failure, and the dismissible `/reload` reminder.
 - [ ] No panel action can run without the required confirmation; no error shows a stack trace; no success path leaves stale rows.
-- [ ] The isolated test-instance recipe is followed (separate HOME, `PI_CODING_AGENT_DIR`, `PI_WEB_DATA_DIR`, socket, and port): the package builds, the plugin is discovered, the server entry activates without errors, and the browser bundle route serves the built module.
+- [ ] Add a Playwright browser smoke test (separate from `npm test`) against the isolated instance: open a workspace, open the Skills panel, verify the machine-wide notice and resolved paths, verify empty or populated list states, then add one skill from a local git fixture and remove it. Record the test command and any environment prerequisites.
+- [ ] The isolated test-instance recipe is followed (separate HOME, `PI_CODING_AGENT_DIR`, `PI_WEB_DATA_DIR`, socket, and port): the plugin is discovered, the server entry activates without errors, and the browser bundle route serves the built module.
 - [ ] A short manual UI checklist is added near the local-development docs, including the daemon-restart and `/reload` expectations. The hosting daemon is not restarted.
 - [ ] `npm run build`, `npm run typecheck`, and `npm test` pass.
 - [ ] The working tree has no leftover temp clones in the OS temp directory and no build artifacts outside `dist/` and `node_modules/`.

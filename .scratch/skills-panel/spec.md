@@ -199,9 +199,10 @@ Channels:
 
 ### Build and test
 
-- Add `npm test` using Node's built-in test runner (`node --test`), which discovers `test/**/*.test.ts` under the repo's Node floor. Tests import source with explicit `.ts` extensions, matching the existing tsconfig.
+- Add `npm test` using Node's built-in test runner (`node --test`), which discovers `test/**/*.test.ts` under the repo's Node floor. Tests import source with explicit `.ts` extensions, matching the existing tsconfig. Keep the Playwright smoke test in a separate command so unit tests stay fast and hermetic.
 - Extend typechecking to tests with a test tsconfig that includes `src` and `test` and emits nothing.
 - The operation session is the single seam. Tests create a temporary HOME, a temporary managed directory and lock, local git fixture sources, a fake clock, and a fake or local HTTP server for GitHub/search, then drive the session and assert its emitted frames. No test touches the real HOME, the real lock, or the network. The peer adapter is a thin JSON mapping tested only for validation and prompt return.
+- Add Playwright as a dev dependency for one isolated-instance panel smoke test. Reuse the cached Chromium revision; do not make the default unit command depend on a browser.
 
 ## Testing Decisions
 
@@ -215,6 +216,7 @@ Good tests assert external behaviour: the contents of the managed directory, the
 - **Remove:** managed removal, broken cleanup, unmanaged refusal, missing directory, symlink refusal, preserved lock extras.
 - **Search:** valid response, non-2xx, malformed JSON, abort, sanitisation, sort order.
 - **Parity:** install the same generic git source into two temporary HOMEs, one with the real `skills` CLI and one with the plugin, and compare the lock after normalising timestamps. Cover update decisions with changed/unchanged hashes and a mocked GitHub tree. Cover removal, broken cleanup, and unmanaged protection as filesystem tests.
+- **Panel smoke:** one Playwright run against an isolated PI WEB instance: open a workspace, open the Skills panel, verify the machine-wide notice, paths, and list states, then exercise one add and one remove against a local git fixture.
 - **Prior art:** upstream's vitest suite is a reference for fixture shapes, but no test code is copied. There is no existing test harness in this repo; the operation seam is new and deliberately the only new seam.
 
 ## Out of Scope
@@ -225,7 +227,8 @@ Good tests assert external behaviour: the contents of the managed directory, the
 - Adoption of unmanaged skills, pinning or unpinning, candidate/version scanning, drift detection, sidecars, extra lock fields, global restore, and a read-only Check action.
 - Collision warnings across scopes, because there is only one scope.
 - Automatic session reload, session messaging, a companion Pi extension, and telemetry.
-- Browser-side tests with a DOM, screenshot tests, and remote-machine-specific behaviour beyond `machineSpecific: true`.
+- Broad browser test matrices, screenshot baselines, and cross-browser coverage. One Playwright smoke test of the panel is in scope; it is not a browser test suite.
+- Remote-machine-specific behaviour beyond `machineSpecific: true`.
 - Publishing to npm.
 
 ## Further Notes
