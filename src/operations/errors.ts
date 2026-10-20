@@ -8,7 +8,18 @@ export type JsonValue =
   | { readonly [key: string]: JsonValue };
 
 /** Structured failure carried by operations instead of a thrown error. */
-export type OperationErrorCode = "lock-unreadable" | "unsafe-path";
+export type OperationErrorCode =
+  | "lock-unreadable"
+  | "unsafe-path"
+  | "invalid-input"
+  | "unknown-operation"
+  | "unsupported-source"
+  | "clone-failed"
+  | "auth-required"
+  | "folder-hash-failed"
+  | "discovery-failed"
+  | "skill-not-found"
+  | "not-implemented";
 
 export type OperationError = {
   readonly code: OperationErrorCode;
