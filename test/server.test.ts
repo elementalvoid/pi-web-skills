@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { JsonValue } from "@jmfederico/pi-web/server-plugin-api";
+import type {
+  JsonValue,
+  ServerPluginActivationContextV5,
+  ServerPluginActivationV5,
+} from "@jmfederico/pi-web/server-plugin-api";
 import { resolveSkillPaths } from "../src/operations/paths.ts";
 import { handlePeerRequest } from "../src/server.ts";
 
@@ -141,8 +145,12 @@ async function openPluginChannel(
   const { default: plugin } = await import("../src/server.ts");
   const frames: JsonValue[] = [];
   const lifetime = new AbortController();
-  const activation = await plugin.activate({
-    apiVersion: 3,
+  // The published entry type unions API v3 and v5; this helper exercises the v5 contract.
+  const activate = plugin.activate as unknown as (
+    context: ServerPluginActivationContextV5,
+  ) => Promise<ServerPluginActivationV5>;
+  const activation = await activate({
+    apiVersion: 5,
     pluginId: "skills",
     packageRoot: "/tmp",
     dataDirectory: "/tmp",
@@ -164,14 +172,8 @@ async function openPluginChannel(
   if (openChannel === undefined) throw new Error("the plugin exposes no channel");
 
   const channel = await openChannel.call(peer, {
-    project: { id: "project", name: "Project", path: "/project" },
-    workspace: {
-      id: "workspace",
-      projectId: "project",
-      path: "/project",
-      label: "Project",
-      isMain: true,
-    },
+    // The panel is machine-wide, so it never asks the host for workspace authority.
+    scope: { kind: "machine" },
     operation,
     input,
     signal: lifetime.signal,

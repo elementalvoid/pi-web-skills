@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
-import type { PluginActivationContext } from "@jmfederico/pi-web/plugin-api";
+import type { PluginActivationContextV5 } from "@jmfederico/pi-web/plugin-api";
 import plugin from "../src/browser/index.ts";
 
 type PluginEntry = {
@@ -13,23 +13,35 @@ type PluginEntry = {
 };
 
 const activation = {
-  apiVersion: 4,
+  apiVersion: 5,
   pluginId: "skills",
   runtimePluginId: "skills",
-  html: (() => ({})) as unknown as PluginActivationContext["html"],
-  svg: (() => ({})) as unknown as PluginActivationContext["svg"],
+  html: (() => ({})) as unknown as PluginActivationContextV5["html"],
+  svg: (() => ({})) as unknown as PluginActivationContextV5["svg"],
   signal: new AbortController().signal,
   lifetimeSignal: new AbortController().signal,
-} satisfies PluginActivationContext;
+} satisfies PluginActivationContextV5;
 
 test("the browser entry contributes the Skills workspace panel", async () => {
   const result = await plugin.activate(activation);
   const panels = result.contributions.workspacePanels ?? [];
 
-  assert.equal(plugin.apiVersion, 4);
+  assert.equal(plugin.apiVersion, 5);
   assert.equal(panels.length, 1);
   assert.equal(panels[0]?.id, "skills");
   assert.equal(panels[0]?.title, "Skills");
+});
+
+test("the browser entry contributes a stylesheet that ships next to the module", async () => {
+  const result = await plugin.activate(activation);
+  const stylesheets = result.contributions.stylesheets ?? [];
+  const stylesheet = stylesheets[0];
+
+  assert.equal(stylesheets.length, 1);
+  assert.equal(stylesheet?.id, "panel");
+  // The host serves only browserRoot, so the URL must resolve beside the module.
+  const css = await readFile(new URL(String(stylesheet?.url)), "utf8");
+  assert.match(css, /^\.skills-panel,/mu);
 });
 
 test("the browser entry contributes an Open Skills action", async () => {

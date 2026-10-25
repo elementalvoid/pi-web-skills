@@ -7,11 +7,10 @@ import { createAddPanel } from "./add-panel.ts";
 import { renderSkillList } from "./list.ts";
 import { createSearchPanel } from "./search-panel.ts";
 import { renderMachineStatus } from "./status.ts";
-import { renderSkillsStyles } from "./styles.ts";
 import { createUpdatePanel } from "./update-panel.ts";
 
 const plugin = {
-  apiVersion: 4,
+  apiVersion: 5,
   name: "Skills",
   activate: ({ html, runtimePluginId }) => {
     const addHandoff = createAddHandoff();
@@ -22,6 +21,12 @@ const plugin = {
 
     return {
       contributions: {
+        stylesheets: [
+          {
+            id: "panel",
+            url: new URL("./skills-panel.css", import.meta.url).href,
+          },
+        ],
         actions: [
           {
             id: "skills.open",
@@ -40,7 +45,6 @@ const plugin = {
             render: (context: WorkspacePanelContext) => {
               return html`
                 <section class="skills-panel">
-                  ${renderSkillsStyles(html)}
                   <header class="skills-hero">
                     <div class="skills-hero-copy">
                       <p class="skills-kicker">Machine-wide</p>

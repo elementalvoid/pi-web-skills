@@ -2,7 +2,7 @@ import { homedir, tmpdir } from "node:os";
 import type {
   JsonValue,
   PiWebServerPlugin,
-  ServerPluginPeerRequestContext,
+  ServerPluginPeerRequestContextV5,
 } from "@jmfederico/pi-web/server-plugin-api";
 import { openAddChannel } from "./operations/add-channel.ts";
 import { openUpdateChannel } from "./operations/update-channel.ts";
@@ -109,13 +109,13 @@ async function routePeerRequest(
 }
 
 const plugin: PiWebServerPlugin = {
-  apiVersion: 3,
+  apiVersion: 5,
   name: "Skills",
   activate({ pluginId, logger, execFile }) {
     logger.info("Activating Skills plugin", { pluginId });
     return {
       peer: {
-        request: (context: ServerPluginPeerRequestContext) =>
+        request: (context: ServerPluginPeerRequestContextV5) =>
           handlePeerRequest(
             { operation: context.operation, input: context.input, signal: context.signal },
             daemonEnvironment(),

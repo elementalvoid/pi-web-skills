@@ -53,8 +53,8 @@ reloads sessions itself.
 
 ### Requirements
 
-- PI WEB with browser plugin API v4 and server plugin API v3. Tested against
-  `@jmfederico/pi-web` 1.202610.1.
+- PI WEB with browser and server plugin API v5. Both first shipped in
+  `@jmfederico/pi-web` 1.202610.5; tested against 1.202610.6.
 - Node.js 22.20 or newer to build the package.
 - `git`, plus a PI WEB session daemon running as the user whose skills you want to
   manage.

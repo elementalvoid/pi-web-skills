@@ -106,6 +106,17 @@ try {
   await page.goto(panelUrl, { waitUntil: "load" });
   await page.getByRole("heading", { name: "Skills", exact: true }).waitFor({ timeout: 15_000 });
   await page.getByText("Changes apply to every workspace on this machine", { exact: false }).first().waitFor();
+  // The panel styles arrive through the contributed stylesheet, not inline markup,
+  // and loading is asynchronous, so poll until the host adopts it.
+  let panelDisplay = "";
+  for (let attempt = 0; attempt < 50 && panelDisplay !== "grid"; attempt += 1) {
+    panelDisplay = await page
+      .locator(".skills-panel")
+      .first()
+      .evaluate((node) => getComputedStyle(node).display);
+    if (panelDisplay !== "grid") await page.waitForTimeout(100);
+  }
+  assert.equal(panelDisplay, "grid", "the contributed stylesheet applies to the panel");
   await page.getByText(managedDirectory, { exact: true }).waitFor();
   await page.getByText(lockfilePath, { exact: true }).waitFor();
 

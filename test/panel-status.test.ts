@@ -102,7 +102,7 @@ function drawStatus(context: WorkspacePanelContext): string {
 
 function drawPanel(context: WorkspacePanelContext): string {
   const activation = plugin.activate({
-    apiVersion: 4,
+    apiVersion: 5,
     pluginId: "skills",
     runtimePluginId: "skills",
     html,
