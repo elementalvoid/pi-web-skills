@@ -63,7 +63,7 @@ The package is published to npm after a maintainer approves each staged release.
 Install it as a Pi package:
 
 ```sh
-pi install npm:pi-web-skills@0.1.1 # x-release-please-version
+pi install npm:pi-web-skills@0.2.0 # x-release-please-version
 ```
 
 Or install it from a source checkout:
