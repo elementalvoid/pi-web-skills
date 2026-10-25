@@ -59,7 +59,14 @@ reloads sessions itself.
 - `git`, plus a PI WEB session daemon running as the user whose skills you want to
   manage.
 
-The package is not published to npm. Install it from a source checkout:
+The package is published to npm after a maintainer approves each staged release.
+Install it as a Pi package:
+
+```sh
+pi install npm:pi-web-skills@0.1.0 # x-release-please-version
+```
+
+Or install it from a source checkout:
 
 ```sh
 git clone https://github.com/elementalvoid/pi-web-skills.git
@@ -176,9 +183,11 @@ cleanup, and Update's confirmation. It never touches a running PI WEB instance o
 its data directory. See [docs/local-development.md](docs/local-development.md) for
 prerequisites and the manual checklist.
 
-Upstream source is pinned as a vendored subset; see
-[docs/upstream-parity.md](docs/upstream-parity.md). `skills@1.7.4` is a dev
-dependency used only for parity fixtures.
+The vendored subset comes from
+[vercel-labs/skills](https://github.com/vercel-labs/skills) (MIT, Copyright (c)
+2026 Vercel, Inc.); see [docs/upstream-parity.md](docs/upstream-parity.md) for the
+pinned commit and file list. `skills@1.7.4` is a dev dependency used only for
+parity fixtures.
 
 ## Contributing
 
