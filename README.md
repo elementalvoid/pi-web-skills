@@ -60,7 +60,13 @@ reloads sessions itself.
   manage.
 
 The package is published to npm after a maintainer approves each staged release.
-You can also install it from a source checkout:
+Install it as a Pi package:
+
+```sh
+pi install npm:pi-web-skills@0.1.0 # x-release-please-version
+```
+
+Or install it from a source checkout:
 
 ```sh
 git clone https://github.com/elementalvoid/pi-web-skills.git
