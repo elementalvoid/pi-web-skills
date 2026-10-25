@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/elementalvoid/pi-web-skills/compare/v0.1.1...v0.2.0) (2026-10-25)
+
+
+### Features
+
+* require PI WEB plugin API v5 ([30440a9](https://github.com/elementalvoid/pi-web-skills/commit/30440a96984924806acef40e038c577d85eb45f3))
+
 ## [0.1.1](https://github.com/elementalvoid/pi-web-skills/compare/v0.1.0...v0.1.1) (2026-10-25)
 
 
