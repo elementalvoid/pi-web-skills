@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/elementalvoid/pi-web-skills/compare/v0.1.0...v0.1.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* publish new packages with public access ([#3](https://github.com/elementalvoid/pi-web-skills/issues/3)) ([e735131](https://github.com/elementalvoid/pi-web-skills/commit/e7351318dedc86eb82be372c08dd4ad08f408330))
+
 ## 0.1.0 (2026-10-25)
 
 

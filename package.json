@@ -1,6 +1,6 @@
 {
   "name": "pi-web-skills",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "PI WEB panel for managing the agent skills Pi loads from ~/.agents/skills",
   "license": "MIT",
