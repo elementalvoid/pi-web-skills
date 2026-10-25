@@ -8,6 +8,9 @@
     "type": "git",
     "url": "git+https://github.com/elementalvoid/pi-web-skills.git"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "pi-web",
     "pi-web-plugin",
