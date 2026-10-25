@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "PI WEB panel for managing the agent skills Pi loads from ~/.agents/skills",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/elementalvoid/pi-web-skills.git"
