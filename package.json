@@ -50,6 +50,7 @@
     "docs",
     "CHANGELOG.md",
     "GLOSSARY.md",
-    "README.md"
+    "README.md",
+    "src/vendor/skills/LICENSE"
   ]
 }
