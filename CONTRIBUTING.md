@@ -42,6 +42,28 @@ PI WEB does not compile TypeScript for local packages:
 The detailed recipe, including how to run a second isolated instance, is in
 [docs/local-development.md](docs/local-development.md#load-from-disk).
 
+## Releasing
+
+Release Please keeps a release PR open on `main`. Merging it bumps the version,
+updates `CHANGELOG.md`, and creates a `vX.Y.Z` tag. The first release is
+`v0.1.0`.
+
+A `v*` tag runs the **Publish** workflow, which builds the package and stages it
+on npm with `npm stage publish`. A staged version is not installable until a
+maintainer approves it with 2FA:
+
+```sh
+npm stage list pi-web-skills
+npm stage approve <stage-id>
+```
+
+The release workflow calls **Publish** for the tag it creates, because tags
+created with `GITHUB_TOKEN` do not trigger workflows on their own.
+
+The workflow needs a repository secret `NPM_STAGE`: an npm granular access token
+with publish access to `pi-web-skills`. A 2FA bypass is not required because
+staging defers proof-of-presence to approval.
+
 ## Restarting the session daemon
 
 Server plugins are imported once per session-daemon start. `/reload` and a

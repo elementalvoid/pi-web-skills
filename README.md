@@ -59,7 +59,8 @@ reloads sessions itself.
 - `git`, plus a PI WEB session daemon running as the user whose skills you want to
   manage.
 
-The package is not published to npm. Install it from a source checkout:
+The package is published to npm after a maintainer approves each staged release.
+You can also install it from a source checkout:
 
 ```sh
 git clone https://github.com/elementalvoid/pi-web-skills.git
