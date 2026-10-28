@@ -10,6 +10,7 @@ src/
 │   ├── add-handoff.ts    Search -> Add preselection, scoped to one hosted panel
 │   ├── search-panel.ts   skills.sh search and Add from a result
 │   ├── update-panel.ts   Update confirmation, progress, results, cancel
+│   ├── repo-url.ts       provider file view for a skill path
 │   └── sanitize-name.ts  browser copy of the install-folder rule
 ├── server.ts             PI WEB server entry; peer requests and channels
 ├── operations/

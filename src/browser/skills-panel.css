@@ -446,6 +446,11 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+.skills-panel .skills-link {
+  color: var(--pi-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .skills-panel .skills-actions {
   display: flex;
   flex-wrap: wrap;

@@ -4,6 +4,7 @@ import type {
   WorkspacePanelContext,
 } from "@jmfederico/pi-web/plugin-api";
 import type { ListPayload, ListRow, SkillState } from "../operations/list.ts";
+import { skillFileUrl } from "./repo-url.ts";
 import { refreshMachineStatus } from "./status.ts";
 
 type ListState =
@@ -236,7 +237,16 @@ function renderMeta(
     items.push({ label: "Folder", value: html`<code>${row.folderName}</code>` });
   }
   if (row.skillPath !== null) {
-    items.push({ label: "Skill path", value: html`<code>${row.skillPath}</code>` });
+    const href = skillFileUrl(row);
+    items.push({
+      label: "Skill path",
+      value:
+        href === null
+          ? html`<code>${row.skillPath}</code>`
+          : html`<a class="skills-link" href=${href} target="_blank" rel="noreferrer noopener">
+              <code>${row.skillPath}</code>
+            </a>`,
+    });
   }
   if (row.pluginName !== null) items.push({ label: "Plugin", value: row.pluginName });
   if (row.installedAt !== null) {

@@ -255,6 +255,11 @@ test("a managed row offers per-skill Update and expandable details", async () =>
   assert.match(text, /<details/);
   assert.match(text, /Details &amp; actions/);
   assert.match(text, /skills-description/);
+  assert.match(
+    text,
+    /<a class="skills-link" href=https:\/\/github\.com\/owner\/repo\/blob\/main\/skills\/demo\/SKILL\.md target="_blank"/,
+    "the skill path links to its provider file view",
+  );
   click(template, "Update");
   assert.deepEqual(updated, ["demo"]);
 });
