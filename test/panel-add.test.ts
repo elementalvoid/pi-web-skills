@@ -214,6 +214,42 @@ test("cancel aborts a channel open that has not resolved, then closes the late c
   assert.deepEqual(sent, []);
 });
 
+test("cancel dismisses a resolved skill list and closes the channel", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const channel = fakeChannel(sent, closeReasons);
+  const host: Host = {
+    channelOptions: [],
+    requests: [],
+    channelOpen: async () => channel,
+  };
+  const panel = createAddPanel(html) as unknown as (
+    context: WorkspacePanelContext,
+  ) => FakeTemplate;
+  const context = panelContext(host);
+
+  submit(setSource(panel, context, "owner/repo"));
+  await tick();
+
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "candidates", candidates: [{ ...candidate, existing: "none" }] });
+  onData({ type: "candidates-end", total: 1 });
+
+  const resolved = panel(context);
+  assert.match(textOf(resolved), /1 skill found/, "the resolved list is shown");
+
+  click(resolved, "Cancel");
+
+  const dismissed = textOf(panel(context));
+  assert.doesNotMatch(dismissed, /discovered/, "the discovered list is dismissed");
+  assert.doesNotMatch(dismissed, /skills\/notes\/SKILL\.md/, "no candidate row remains");
+  assert.doesNotMatch(dismissed, /Cancel/, "Cancel is gone once nothing is open");
+  assert.match(dismissed, /cancelled/i);
+  assert.deepEqual(sent, [{ type: "cancel" }], "the session is told to cancel");
+  assert.deepEqual(closeReasons, ["cancelled"], "the channel is closed");
+});
+
 test("an existing target asks for overwrite confirmation before any install frame", async () => {
   const sent: JsonValue[] = [];
   const closeReasons: string[] = [];

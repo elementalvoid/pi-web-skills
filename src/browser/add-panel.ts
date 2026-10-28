@@ -211,19 +211,20 @@ export function createAddPanel(
       const pending = state.pending;
       state.pending = null;
       pending?.abort();
-      if (state.channel === null) {
-        if (pending === null) return;
-        state.phase = state.candidates.length === 0 ? "idle" : "candidates";
-        state.message = "The add operation was cancelled.";
-        state.wantedSkill = null;
-        render();
-        return;
+      const channel = state.channel;
+      state.channel = null;
+      if (channel === null && pending === null) return;
+      if (channel !== null) {
+        channel.send({ type: "cancel" });
+        channel.close("cancelled");
       }
-      state.channel.send({ type: "cancel" });
-      closeChannel(state, "cancelled");
-      state.phase = state.candidates.length === 0 ? "idle" : "candidates";
-      state.message = "The add operation was cancelled.";
+      // Dismissing the list is the only useful outcome: a closed channel cannot install.
+      state.phase = "idle";
+      state.candidates = [];
+      state.selected.clear();
+      state.resultShown = false;
       state.wantedSkill = null;
+      state.message = "The add operation was cancelled.";
       render();
     };
 
