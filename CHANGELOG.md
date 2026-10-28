@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/elementalvoid/pi-web-skills/compare/v0.2.0...v0.3.0) (2026-10-28)
+
+
+### Features
+
+* **browser:** link a skill path to its provider file view ([4a1c992](https://github.com/elementalvoid/pi-web-skills/commit/4a1c9920b87b981ed283d3c72e59e3b7371e12cf))
+* **skills:** dismiss results and update selected check results ([f03a658](https://github.com/elementalvoid/pi-web-skills/commit/f03a65883261c7498bd6b5d7f6d2ead49a7b4036))
+
+
+### Bug Fixes
+
+* **browser:** dismiss the discovered list on cancel ([8a84779](https://github.com/elementalvoid/pi-web-skills/commit/8a84779d1822077ce7b4632efbf3ec29830cb973))
+* **git:** clone only the folders a skill lives in ([25a5461](https://github.com/elementalvoid/pi-web-skills/commit/25a54617a40ce94489992c9b8516126aec1a7718))
+* **test:** run the suite on Node 22 ([c677235](https://github.com/elementalvoid/pi-web-skills/commit/c67723572dab916d9c188875e6c7cbcebbd8ccb1))
+
 ## [0.2.0](https://github.com/elementalvoid/pi-web-skills/compare/v0.1.1...v0.2.0) (2026-10-25)
 
 
