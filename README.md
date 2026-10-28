@@ -29,14 +29,16 @@ Five operations:
 - **Add** from a GitHub shorthand, a GitHub or GitLab URL, or a generic git URL.
   Resolve the source first, then select one, several, or all discovered skills.
   Replacing an existing folder requires an explicit overwrite confirmation.
-- **Search** skills.sh by keyword and start an Add from a result.
+- **Search** skills.sh by keyword and start an Add from a result. Results can
+  be dismissed.
 - **Update** every managed install by comparing the remote folder hash at the
   locked ref. **Check for updates** is a read-only preflight: it reports
   available, unchanged, skipped, deleted, and failed entries without copying or
-  writing anything. **Update all** asks first and states that a remote change
-  replaces the installed folder and can overwrite a local edit. Changed and
-  relocated skills are replaced; unchanged, skipped, deleted-upstream, and failed
-  entries are reported separately.
+  writing anything. Its results can be dismissed, and the available skills are
+  ticked so you can **Update selected** or **Update all**. An update asks first
+  and states that a remote change replaces the installed folder and can
+  overwrite a local edit. Changed and relocated skills are replaced; unchanged,
+  skipped, deleted-upstream, and failed entries are reported separately.
 - **Remove** a managed install and its lock entry, or remove only the stale lock
   entry for a broken skill. Remove always asks first.
 

@@ -256,6 +256,23 @@ test("a search prompts for a keyword, shows progress, then rows with source and 
   assert.equal(hasAlert(ready), false);
 });
 
+test("search results can be dismissed", async () => {
+  const host = fakeHost(searchResults);
+  const panel = createSearchPanel(html, createAddHandoff()) as unknown as Panel;
+  const context = panelContext(host);
+
+  submit(setInput(panel, context, "react"));
+  await tick();
+  assert.match(textOf(panel(context)), /notes/);
+
+  clickIn(panel(context), "Dismiss results");
+  const dismissed = panel(context);
+  const text = textOf(dismissed);
+  assert.doesNotMatch(text, /owner\/repo/);
+  assert.doesNotMatch(text, /Add notes/);
+  assert.match(text, /Search skills\.sh by keyword/);
+});
+
 test("typing a keyword asks the host to render so the Search button enables", () => {
   const host = fakeHost(searchResults);
   const panel = createSearchPanel(html, createAddHandoff()) as unknown as Panel;

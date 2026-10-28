@@ -30,6 +30,8 @@ type UpdateState = {
   pendingUpdate: string | null;
   /** null means every managed skill; a list means a per-row Update. */
   pendingNames: string[] | null;
+  /** Available skills ticked after a check; a partial update sends only these. */
+  selected: string[];
   reloadReminder: boolean;
 };
 
@@ -69,6 +71,7 @@ export function createUpdatePanel(
         pending: null,
         pendingUpdate: null,
         pendingNames: null,
+        selected: [],
         reloadReminder: false,
       };
       states.set(key, state);
@@ -128,6 +131,7 @@ export function createUpdatePanel(
     const finish = (prefix: string | null) => {
       const summary = resultsMessage();
       state.message = prefix === null ? `${summary}.` : `${prefix} ${summary}.`;
+      if (state.mode === "check") state.selected = [...state.available];
       state.reloadReminder = state.mode === "update" && state.updated.length > 0;
       if (state.updated.length > 0) refreshSkillList(context);
     };
@@ -220,6 +224,7 @@ export function createUpdatePanel(
       state.skipped = [];
       state.deleted = [];
       state.failed = [];
+      state.selected = [];
       state.pendingUpdate = null;
       state.reloadReminder = false;
       closeChannel(state, "replaced");
@@ -280,6 +285,29 @@ export function createUpdatePanel(
         );
       }
       closeChannel(state, "cancelled");
+      render();
+    };
+
+    const dismiss = () => {
+      state.phase = "idle";
+      state.mode = "update";
+      state.message = "The update results were dismissed.";
+      state.current = null;
+      state.pendingNames = null;
+      state.updated = [];
+      state.available = [];
+      state.unchanged = [];
+      state.skipped = [];
+      state.deleted = [];
+      state.failed = [];
+      state.selected = [];
+      render();
+    };
+
+    const toggleSelected = (name: string) => {
+      state.selected = state.selected.includes(name)
+        ? state.selected.filter((item) => item !== name)
+        : [...state.selected, name];
       render();
     };
 
@@ -348,12 +376,32 @@ export function createUpdatePanel(
                 ? null
                 : html`
                     <h4>Updates available (${String(state.available.length)})</h4>
-                    <p>These skills would be replaced by Update all. Nothing was changed.</p>
-                    <ul>
-                      ${state.available.map((name) => html`<li><strong>${name}</strong></li>`)}
+                    <p>These skills would be replaced by an update. Nothing was changed.</p>
+                    <ul class="skills-available">
+                      ${state.available.map(
+                        (name) => html`
+                          <li>
+                            <label>
+                              <input
+                                type="checkbox"
+                                ?checked=${state.selected.includes(name)}
+                                @change=${() => toggleSelected(name)}
+                              />
+                              <strong>${name}</strong>
+                            </label>
+                          </li>
+                        `,
+                      )}
                     </ul>
-                    <button type="button" class="skills-primary" @click=${() =>
-                      requestUpdate(context, null)}>Update all</button>
+                    <div class="skills-actions">
+                      <button
+                        type="button"
+                        class="skills-primary"
+                        ?disabled=${state.selected.length === 0}
+                        @click=${() => requestUpdate(context, [...state.selected])}
+                      >Update selected (${String(state.selected.length)})</button>
+                      <button type="button" @click=${() => requestUpdate(context, null)}>Update all</button>
+                    </div>
                   `}
               ${state.unchanged.length === 0
                 ? null
@@ -392,11 +440,18 @@ export function createUpdatePanel(
                       )}
                     </ul>
                   `}
-              ${state.updated.length === 0
-                ? null
-                : html`<button type="button" @click=${() => refreshSkillList(context)}>
-                    Refresh list
-                  </button>`}
+              <div class="skills-actions">
+                ${state.updated.length === 0
+                  ? null
+                  : html`<button type="button" @click=${() => refreshSkillList(context)}>
+                      Refresh list
+                    </button>`}
+                ${state.phase === "running"
+                  ? null
+                  : html`<button type="button" class="skills-ghost" @click=${dismiss}>
+                      Dismiss results
+                    </button>`}
+              </div>
             `
           : null}
 

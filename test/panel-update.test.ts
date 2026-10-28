@@ -70,6 +70,28 @@ function click(template: FakeTemplate, label: string): void {
   fire(template, label, "@click");
 }
 
+/** The innermost binding for `attribute` in the node whose rendered text contains `text`. */
+function bindingIn(template: FakeTemplate, text: string, attribute: string): unknown {
+  for (const node of [...collect(template)].reverse()) {
+    if (!textOf(node).includes(text)) continue;
+    const index = node.strings.findIndex((chunk) => chunk.trimEnd().endsWith(`${attribute}=`));
+    if (index >= 0) return node.values[index];
+  }
+  return undefined;
+}
+
+/** Click the one button inside the node whose rendered text contains `text`. */
+function clickIn(template: FakeTemplate, text: string): void {
+  for (const node of [...collect(template)].reverse()) {
+    if (!textOf(node).includes(text)) continue;
+    const index = node.strings.findIndex((chunk) => chunk.trimEnd().endsWith("@click="));
+    if (index < 0) continue;
+    (node.values[index] as () => void)();
+    return;
+  }
+  assert.fail(`no @click handler in the node containing ${text}`);
+}
+
 async function tick(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
@@ -137,6 +159,87 @@ test("Update all confirms the local-edit risk before the channel opens", async (
   await tick();
   assert.deepEqual(host.operations, ["update"]);
   assert.deepEqual(host.inputs, [{}], "the panel updates every managed entry");
+});
+
+test("a check result updates only the ticked skills", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const host: Host = {
+    channelOptions: [],
+    operations: [],
+    inputs: [],
+    channelOpen: async () => fakeChannel(sent, closeReasons),
+  };
+  const panel = createUpdatePanel(html);
+  const context = panelContext(host);
+
+  click(panel(context), "Check for updates");
+  await tick();
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "progress", name: "alpha", state: "available" });
+  onData({ type: "progress", name: "beta", state: "available" });
+  onData({
+    type: "done",
+    updated: [],
+    available: ["alpha", "beta"],
+    unchanged: [],
+    skipped: [],
+    deleted: [],
+    failed: [],
+  });
+
+  const checked = panel(context);
+  assert.equal(bindingIn(checked, "alpha", "?checked"), true, "available skills start ticked");
+  assert.equal(bindingIn(checked, "beta", "?checked"), true);
+
+  (bindingIn(checked, "alpha", "@change") as () => void)();
+  const ticked = panel(context);
+  assert.equal(bindingIn(ticked, "alpha", "?checked"), false);
+  assert.equal(bindingIn(ticked, "beta", "?checked"), true);
+
+  clickIn(ticked, "Update selected (1)");
+  assert.match(textOf(panel(context)), /Update beta\?/);
+  click(panel(context), "Confirm update");
+  await tick();
+  assert.deepEqual(host.inputs.at(-1), { names: ["beta"] }, "only the ticked skill is sent");
+});
+
+test("a check result can be dismissed completely", async () => {
+  const sent: JsonValue[] = [];
+  const closeReasons: string[] = [];
+  const host: Host = {
+    channelOptions: [],
+    operations: [],
+    inputs: [],
+    channelOpen: async () => fakeChannel(sent, closeReasons),
+  };
+  const panel = createUpdatePanel(html);
+  const context = panelContext(host);
+
+  click(panel(context), "Check for updates");
+  await tick();
+  const onData = host.channelOptions[0]?.onData;
+  assert.ok(onData !== undefined);
+  onData({ type: "progress", name: "beta", state: "available" });
+  onData({
+    type: "done",
+    updated: [],
+    available: ["beta"],
+    unchanged: [],
+    skipped: [],
+    deleted: [],
+    failed: [],
+  });
+  assert.match(textOf(panel(context)), /Updates available \(1\)/);
+
+  clickIn(panel(context), "Dismiss results");
+  const dismissed = panel(context);
+  const text = textOf(dismissed);
+  assert.doesNotMatch(text, /Updates available/);
+  assert.doesNotMatch(text, /beta/);
+  assert.match(text, /dismissed/i);
+  assert.match(text, /Check for updates/);
 });
 
 test("a per-row Update request confirms and sends only that skill", async () => {

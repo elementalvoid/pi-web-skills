@@ -83,6 +83,12 @@ export function createSearchPanel(
       render();
     };
 
+    const dismiss = () => {
+      state.phase = "idle";
+      state.results = [];
+      render();
+    };
+
     const renderState = (): Template => {
       if (loading) return html`<p class="skills-message" aria-live="polite">Searching skills.sh…</p>`;
       if (state.phase === "error") return html`<p class="skills-alert" role="alert">${state.message}</p>`;
@@ -113,6 +119,7 @@ export function createSearchPanel(
             `,
           )}
         </ul>
+        <button type="button" class="skills-ghost" @click=${dismiss}>Dismiss results</button>
       `;
     };
 
