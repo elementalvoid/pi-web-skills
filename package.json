@@ -34,7 +34,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && cp src/browser/skills-panel.css dist/browser/skills-panel.css",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "node --test test",
+    "test": "node --test \"test/*.test.ts\"",
     "test:e2e": "npm run build && node e2e/skills-panel.e2e.mjs"
   },
   "dependencies": {

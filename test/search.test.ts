@@ -38,6 +38,19 @@ function row(id: string, name: string, source: string, installs: number): object
   return { id, name, source, installs };
 }
 
+/**
+ * `AbortSignal.timeout` unrefs its timer, so a lone pending promise lets the
+ * loop drain before the timeout fires. Hold a ref'd handle open while it runs.
+ */
+async function withLiveLoop<T>(work: Promise<T>): Promise<T> {
+  const ticker = setInterval(() => undefined, 1);
+  try {
+    return await work;
+  } finally {
+    clearInterval(ticker);
+  }
+}
+
 test("a valid response is returned sorted by installs descending", async () => {
   const { fetch, calls } = fetchReturning({
     skills: [
@@ -235,7 +248,7 @@ test("a request that outlives the timeout is search-unavailable with a retry hin
       );
     });
 
-  const result = await searchSkills(context(hangUntilAbort, { timeoutMs: 5 }), "git");
+  const result = await withLiveLoop(searchSkills(context(hangUntilAbort, { timeoutMs: 5 }), "git"));
 
   assert.equal(result.ok, false);
   if (!result.ok) {
@@ -251,7 +264,7 @@ test("a stalled response body also times out with the retry hint", async () => {
     json: () => new Promise<unknown>(() => undefined),
   });
 
-  const result = await searchSkills(context(stalledBody, { timeoutMs: 5 }), "git");
+  const result = await withLiveLoop(searchSkills(context(stalledBody, { timeoutMs: 5 }), "git"));
 
   assert.equal(result.ok, false);
   if (!result.ok) {
