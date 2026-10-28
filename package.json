@@ -13,11 +13,20 @@
   },
   "keywords": [
     "pi-web.dev-plugin",
-    "pi-web",
     "pi-web-plugin",
     "pi-package",
-    "skills",
-    "agent-skills"
+    "pi-web",
+    "pi-web-ui",
+    "pi-coding-agent",
+    "developer-tools",
+    "productivity",
+    "agent-skills",
+    "agent-skills-manager",
+    "skills-manager",
+    "skill-md",
+    "skills-sh",
+    "claude-skills",
+    "skills"
   ],
   "engines": {
     "node": ">=22.20"
