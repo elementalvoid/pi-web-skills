@@ -27,6 +27,12 @@ export type ExecFile = (request: ExecFileRequest) => Promise<ExecFileResult>;
 /** Requested clone bound; the host may lower it. */
 export const CLONE_TIMEOUT_MS = 120_000;
 
+/** The one file that makes a folder a skill. */
+const SKILL_FILE = "SKILL.md";
+
+/** The only tree the add flow reads outside a skill folder: the plugin manifests. */
+const PLUGIN_MANIFEST_DIRECTORY = ".claude-plugin";
+
 /** No prompts, no opportunistic index locks: a clone must never wait on a terminal. */
 const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
@@ -60,23 +66,27 @@ export async function cloneSource(
     return cloneFailure("The temporary directory is outside the temp root.", signal);
   }
 
+  // Blobless and sparse: the host bounds every command, so the checkout below
+  // fetches only the folders a skill lives in instead of a whole working tree.
+  const ref = parsed.ref;
+  const clone = [
+    "clone",
+    "--depth",
+    "1",
+    ...(ref === undefined || FULL_COMMIT.test(ref) ? [] : ["--branch", ref]),
+    "--filter=blob:none",
+    "--sparse",
+    parsed.url,
+    directory,
+  ];
   const steps: readonly (readonly string[])[] =
-    parsed.ref !== undefined && FULL_COMMIT.test(parsed.ref)
+    ref !== undefined && FULL_COMMIT.test(ref)
       ? [
-          ["clone", "--depth", "1", parsed.url, directory],
-          ["fetch", "--depth", "1", "origin", parsed.ref],
+          clone,
+          ["fetch", "--depth", "1", "origin", ref],
           ["checkout", "--quiet", "--detach", "FETCH_HEAD"],
         ]
-      : [
-          [
-            "clone",
-            "--depth",
-            "1",
-            ...(parsed.ref === undefined ? [] : ["--branch", parsed.ref]),
-            parsed.url,
-            directory,
-          ],
-        ];
+      : [clone];
 
   for (const args of steps) {
     const result = await runGit(exec, args, {
@@ -88,7 +98,49 @@ export async function cloneSource(
       return result;
     }
   }
+  const materialized = await materializeSkillFolders(exec, directory, signal);
+  if (!materialized.ok) {
+    await removeTempDirectory(tempRoot, directory);
+    return materialized;
+  }
   return { ok: true, value: directory };
+}
+
+/**
+ * Check out the folders that hold a SKILL.md, plus the plugin manifests. A large
+ * repository transfers far more than the hosting command bound allows, so only
+ * those paths are fetched. A SKILL.md at the repository root owns the whole tree.
+ */
+async function materializeSkillFolders(
+  exec: ExecFile,
+  directory: string,
+  signal: AbortSignal,
+): Promise<Result<null>> {
+  const listed = await runGit(exec, ["ls-tree", "-r", "-z", "--name-only", "HEAD"], {
+    cwd: directory,
+    signal,
+  });
+  if (!listed.ok) return listed;
+  const folders = new Set<string>();
+  let rootSkill = false;
+  for (const path of listed.value.stdout.split("\0")) {
+    if (path === SKILL_FILE) rootSkill = true;
+    else if (path.endsWith(`/${SKILL_FILE}`)) folders.add(path.slice(0, -SKILL_FILE.length - 1));
+    const manifest = path.indexOf(`${PLUGIN_MANIFEST_DIRECTORY}/`);
+    if (manifest !== -1) {
+      folders.add(path.slice(0, manifest + PLUGIN_MANIFEST_DIRECTORY.length));
+    }
+  }
+  if (rootSkill) {
+    const disabled = await runGit(exec, ["sparse-checkout", "disable"], { cwd: directory, signal });
+    return disabled.ok ? { ok: true, value: null } : disabled;
+  }
+  if (folders.size === 0) return { ok: true, value: null };
+  const checked = await runGit(exec, ["sparse-checkout", "set", "--cone", ...folders], {
+    cwd: directory,
+    signal,
+  });
+  return checked.ok ? { ok: true, value: null } : checked;
 }
 
 /**
@@ -160,6 +212,15 @@ function cloneFailure(message: string, signal: AbortSignal): Result<never> {
       error: operationError(
         "auth-required",
         `${detail}. Provide GITHUB_TOKEN or GH_TOKEN in the daemon environment for a private source.`,
+      ),
+    };
+  }
+  if (/timed out after \d+ms/i.test(detail)) {
+    return {
+      ok: false,
+      error: operationError(
+        "clone-failed",
+        `${detail}. The server stopped the command before it finished, so this source is too slow to read.`,
       ),
     };
   }

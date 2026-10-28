@@ -722,6 +722,8 @@ test("a full commit SHA is fetched and checked out after a shallow clone", async
       [
         ["fetch", "--depth", "1", "origin", sha],
         ["checkout", "--quiet", "--detach", "FETCH_HEAD"],
+        ["ls-tree", "-r", "-z", "--name-only", "HEAD"],
+        ["sparse-checkout", "set", "--cone", "skills/alpha"],
       ],
     );
 
