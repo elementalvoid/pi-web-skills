@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,7 +12,10 @@ import {
 async function withRoots(
   run: (roots: { root: string; managedDirectory: string; tempRoot: string }) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "pi-web-skills-containment-"));
+  // Canonicalize the fixture root: assertSafeSkillDirectory returns the path it
+  // resolved through symlinks, and on macOS tmpdir() is itself a symlink
+  // (/var -> /private/var), so the raw fixture path would never match.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pi-web-skills-containment-")));
   const managedDirectory = join(root, "managed");
   const tempRoot = join(root, "temp");
   try {
